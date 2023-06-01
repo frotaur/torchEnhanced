@@ -365,6 +365,7 @@ class Trainer(nn.Module):
             self.writer.add_scalar('ep-loss/train',epoch_loss,data_dict['time'])
             self.epoch_log(data_dict)
             
+            # Reinitalize datadict here.
             if(valid_loader is not None):
 
                 with torch.no_grad():
