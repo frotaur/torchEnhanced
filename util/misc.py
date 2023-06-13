@@ -1,7 +1,6 @@
 import torch
 from math import prod
 
-
 def coord_to_flat(coord_tens,dimensions) :
     """
         Given a coordinate tensor of size (...,N), which contains
@@ -22,7 +21,6 @@ def coord_to_flat(coord_tens,dimensions) :
         3,3,3, it would output 1*3*3+3*2+3=15, which is the location of the coordinate (1,2,3) in the flattened tensor.
         The extra dimensions are just treated as batch dimensions.
     """
-
     ndims = coord_tens.shape[-1]
     assert (len(dimensions)==ndims)
 
@@ -32,36 +30,3 @@ def coord_to_flat(coord_tens,dimensions) :
         flat_index_tensor+= coord_tens[...,dimnum]*prod(dimensions[dimnum+1:])
     
     return flat_index_tensor
-
-######### Turn this into unittests #########################
-def test_coord_to_flat_batch():
-    unfolded = torch.randint(0,100,(3,4,5,6)) #4-dim coord tensor
-    folded = unfolded.reshape((-1))
-
-    dimensions = unfolded.shape
-    testcoord = torch.tensor([[1,2,3,4],[0,2,3,2]]) # Set of coordinate points
-
-    flatcoord = coord_to_flat(testcoord,dimensions)
-    assert flatcoord.shape == (2,)
-    res = folded[flatcoord]
-    for i in range(testcoord.shape[0]):
-        assert (res[i]-unfolded[testcoord[i][0]][testcoord[i][1]][testcoord[i][2]][testcoord[i][3]]).all()==0
-
-def test_coord_to_flat_unbatch():
-    unfolded = torch.randint(0,100,(3,4,5,6)) #4-dim coord tensor
-    folded = unfolded.reshape((-1))
-
-    dimensions = unfolded.shape
-    testcoord = torch.tensor([1,2,3,4]) # Set of coordinate points
-
-    flatcoord = coord_to_flat(testcoord,dimensions)
-    assert flatcoord.shape==(), f"Invalid shape : {flatcoord.shape}"
-    res = folded[flatcoord]
-    
-    assert (res-unfolded[testcoord[0]][testcoord[1]][testcoord[2]][testcoord[3]]).all()==0
-
-
-
-if __name__=="__main__":
-    test_coord_to_flat_unbatch()
-    test_coord_to_flat_batch()

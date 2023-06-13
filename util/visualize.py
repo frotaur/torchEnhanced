@@ -15,9 +15,7 @@ def showTens(tensor, columns=None) :
     if(len(tensor.shape)==3) :
         fig = plt.figure()
         plt.imshow(tensor.permute((1,2,0)))
-
         plt.show()
-    
     elif(len(tensor.shape)==4) :
         # Assume B,C,H,W
         B=tensor.shape[0]
@@ -25,7 +23,6 @@ def showTens(tensor, columns=None) :
             numCol=columns
         else :
             numCol=min(8,B)
-        numRows=math.ceil(B/numCol)
 
         fig = plt.figure()
         
@@ -52,7 +49,6 @@ def saveTens(tensor, folderpath,name="",columns=None):
     if(len(tensor.shape)==3) :
         fig = plt.figure()
         plt.imshow(tensor.permute((1,2,0)))
-
         plt.savefig(os.path.join(folderpath,f"{name}.png"))
     elif(len(tensor.shape)==4) :
         # Assume B,C,H,W
@@ -61,7 +57,6 @@ def saveTens(tensor, folderpath,name="",columns=None):
             numCol=columns
         else :
             numCol=min(8,B)
-        numRows=math.ceil(B/numCol)
 
         fig = plt.figure()
         
@@ -81,11 +76,3 @@ def saveTens(tensor, folderpath,name="",columns=None):
         saveTens(tensor,folderpath,name,columns)
     else :
         raise Exception("Tensor shape should be (C,H,W) or (*,C,H,W) !")
-
-
-
-
-
-if __name__=="__main__": 
-    pass
-    

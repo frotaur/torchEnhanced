@@ -1,5 +1,4 @@
 ## Includes some function to manipulate image tensors
-
 import torch
 
 
@@ -28,28 +27,13 @@ def yuv_to_rgb(img):
     
     return img_rgb/255.
 
-def _get_n_dtype(n):
-    # For some reason embedding expect at least ints (not shorts) so
-    # I use dtype int even though it is suboptimal
-    return torch.int32 
-    if(n<=8):
-        dtype=torch.uint8
-    elif(n<=16):
-        dtype=torch.int16
-    elif(n<=24):
-        dtype=torch.int32
-    else :
-        raise ValueError(f"n={n}>24, too high")
-    
-    return dtype
-
 def convert_to_nbit(imgs,n):
     """
         Convert a (B,3,...) 8-bit-channel tensor with values in 0.-1.,
         to a (B,1,...) tensor with nbit-encoded RGB values. For now, n should
         be divisible by 3.
     """
-    dtype=_get_n_dtype(n)
+    dtype=torch.int32
 
     if(n%3!=0):
         raise ValueError(f"n={n} not divisible by 3")
@@ -79,7 +63,7 @@ def decode_from_nbit(imgnbit,n):
         raise ValueError(f"n={n} not divisible by 3")
     
     chn=n//3
-    dtype=_get_n_dtype(n)
+    dtype=torch.int32
 
     trailing = torch.tensor(2**(8-chn-1),dtype=dtype) # Trailing bits which where lost. We choose around the middle
 
