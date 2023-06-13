@@ -3,4 +3,4 @@ __pycache__
 .pytest_cache
 build
 dist
-torchenhanced.egg-info
+*.egg-info
