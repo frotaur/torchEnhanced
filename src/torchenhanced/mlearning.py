@@ -156,7 +156,7 @@ class Trainer(DevModule):
         print(f'Saved checkpoint : {name}')
 
 
-    def process_batch(batch_data,data_dict : dict,**kwargs):
+    def process_batch(self,batch_data,data_dict : dict,**kwargs):
         """
             Redefine this in sub-classes. Should return the loss, as well as 
             the data_dict (potentially updated). Can do logging and other things 
@@ -178,7 +178,7 @@ class Trainer(DevModule):
         """
         raise NotImplementedError('process_batch should be implemented in Trainer sub-class')
 
-    def process_batch_valid(batch_data, data_dict : dict, **kwargs):
+    def process_batch_valid(self,batch_data, data_dict : dict, **kwargs):
         """
             Redefine this in sub-classes. Should return the loss, as well as 
             the data_dict (potentially updated). Can do logging and other things 
@@ -192,6 +192,7 @@ class Trainer(DevModule):
                 - batchnum : current batch number
                 - batch_log : batch interval in which we should log
                 - totbatch : total number of batches.
+                - epoch : current epoch
             data_dict can be modified to store running values, or any other value that might
             be important later. If data_dict is updated, this will persist through the next iteration
             and call of process_batch.
@@ -201,7 +202,7 @@ class Trainer(DevModule):
         raise NotImplementedError('process_batch_valid should be implemented in Trainer sub-class')
 
 
-    def get_loaders(batch_size):
+    def get_loaders(self,batch_size):
         """
             Builds the dataloader needed for training and validation.
             Should be re-implemented in subclass.
@@ -214,7 +215,7 @@ class Trainer(DevModule):
         """
         raise NotImplementedError('get_loaders should be redefined in Trainer sub-class')
 
-    def epoch_log(data_dict):
+    def epoch_log(self,data_dict):
         """
             To be (optionally) implemented in sub-class. Does the logging 
             at the epoch level, is called every epoch. Data_dict has (at least) key-values :
@@ -222,11 +223,12 @@ class Trainer(DevModule):
                 - batchnum : current batch number
                 - batch_log : batch interval in which we should log
                 - totbatch : total number of batches.
+                - epoch : current epoch
             And any number of additional values, depending on what process_batch does.
         """
         pass
 
-    def valid_log(data_dict):
+    def valid_log(self,data_dict):
         """
             To be (optionally) implemented in sub-class. Does the logging 
             at the epoch level, is called every epoch. Data_dict has (at least) key-values :
@@ -234,6 +236,7 @@ class Trainer(DevModule):
                 - batchnum : current batch number
                 - batch_log : batch interval in which we should log
                 - totbatch : total number of batches.
+                - epoch : current epoch
             And any number of additional values, depending on what process_batch does.
         """
         pass
@@ -242,8 +245,12 @@ class Trainer(DevModule):
                      batch_size:int=32,aggregate:int=1,load_from:str=None,
                      unique:bool=False,**kwargs):
         """
-            Trains for specified epoch number. Very basic training loop. This method should generally be re-implemented in full,
-            to cater to the specifics of the problem.
+            Trains for specified epoch number. This method trains the model in a basic way,
+            and does very basic logging. At the minimum, it requires process_batch and 
+            process_batch_valid to be overriden, and other logging methods are optionals.
+
+            data_dict can be used to carry info from one batch to another inside the same epoch,
+            and can be used by process_batch* functions for logging of advanced quantities.
             Params :
             epochs : number of epochs to train for
             save_every : saves trainer state every 'save_every' epochs
@@ -254,6 +261,9 @@ class Trainer(DevModule):
                 of the trainer from file, then continues training the specified
                 number of epochs.
             unique : if True, do not overwrites previous save states.
+
+            <<<PROBLEM : scheduler step only works between epochs. Add an option to 
+            batch_step, with the value of the stepper should be good I think>>>
         """
         if(os.path.isfile(str(load_from))):
             # Loads the trainer state
@@ -265,13 +275,13 @@ class Trainer(DevModule):
         print('Number of batches/epoch : ',len(train_loader))
         data_dict={}
         data_dict['batch_log']=batch_log
+        totbatch = len(train_loader)
+        data_dict['totbatch']=totbatch
         for ep_incr in tqdm(range(epochs)):
             epoch_loss,batch_log_loss,batchnum,n_aggreg=(0,0,0,0)
-            totbatch = len(train_loader)
-
+            
+            self._reset_data_dict()
             data_dict['epoch']=epoch
-            data_dict['totbatch']=totbatch
-
             for batchnum,batch_data in tqdm(enumerate(train_loader),total=totbatch) :
                 n_aggreg+=1
                 # Process the batch according to the model.
@@ -282,6 +292,7 @@ class Trainer(DevModule):
 
                 loss=loss/aggregate # Rescale loss if aggregating.
                 loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.)
 
                 epoch_loss+=loss.item()*aggregate
                 batch_log_loss+=loss.item()*aggregate
@@ -296,21 +307,20 @@ class Trainer(DevModule):
                     self.optim.zero_grad()
 
             self.scheduler.step()
-
             # Log data
             self.writer.add_scalar('ep-loss/train',epoch_loss,data_dict['time'])
             self.epoch_log(data_dict)
             
             # Reinitalize datadict here.
-            if(valid_loader is not None):
+            self._reset_data_dict()
 
+            if(valid_loader is not None):
                 with torch.no_grad():
                     self.model.eval()
                     val_loss=0
-                    
-                    accupix =0
 
                     for (batchnum,batch_data) in enumerate(valid_loader):
+                        data_dict['batchnum']=batchnum
                         loss, data_dict = self.process_batch_valid(batch_data)
                         val_loss+=loss.item()
 
@@ -328,6 +338,11 @@ class Trainer(DevModule):
                      ,model=self.model.state_dict(),session=self.session_hash,model_config=self.model.get_config())
                 self.save_state(state,name=self.run_name,unique=unique)
 
+    def _reset_data_dict(self):
+        for k in self.data_dict:
+            if k not in ['epoch','batch_log','totbatch'] :
+                del self.data_dict[k]
+    
     def __del__(self):
         self.writer.close()
 
