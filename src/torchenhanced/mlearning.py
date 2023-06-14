@@ -41,11 +41,11 @@ class Trainer(DevModule):
         state_save_loc : str or None(default), folder in which to save the training state, 
         used to resume training.
         device : torch.device, device on which to train the model
-        writer_name : str, for tensorboard, name of the training session
+        run_name : str, for tensorboard and saves, name of the training session
     """
 
     def __init__(self, model : nn.Module, optim :Optimizer =None, scheduler : lrsched._LRScheduler =None, 
-                 model_save_loc=None,state_save_loc=None,device='cpu', writer_name = None):
+                 model_save_loc=None,state_save_loc=None,device='cpu', run_name = None):
         super().__init__()
         self.model = model 
         self.model.to(device)
@@ -78,13 +78,41 @@ class Trainer(DevModule):
 
         # Session hash, the date to not overwrite sessions
         self.session_hash = datetime.now().strftime('%H-%M_%d_%m')
-        if(writer_name is None):
-            writer_name= os.path.join('.','runs',self.session_hash)
+        if(run_name is None):
+            self.run_name = self.session_hash
+            run_name= os.path.join('.','runs',self.session_hash)
         else :
-            writer_name = os.path.join('.','runs',writer_name)
+            self.run_name=run_name
+            run_name = os.path.join('.','runs',run_name)
         
-        self.writer = SummaryWriter(writer_name)
+        self.writer = SummaryWriter(run_name)
+        
 
+    @staticmethod
+    def config_from_state(state_path: str):
+        """
+            Given the path to a trainer state, returns a tuple (config, weights)
+            for the saved model. The model can then be initialized by using config 
+            as its __init__ arguments, and load the state_dict from weights.
+
+            params : 
+            state_path : path of the saved trainer state
+
+            returns: 3-uple
+            model_name : str, the saved model class name
+            config : dict, the saved model config
+            weights : torch.state_dict, the model's state_dict
+
+        """
+        if(not os.path.exists(state_path)):
+            raise ValueError(f'Path {state_path} not found, can\'t load config from it')
+
+        state_dict = torch.load(state_path)
+        config = state_dict['model_config']
+        model_name = state_dict['name']
+        weights = state_dict['model']
+
+        return model_name,config,weights
 
     def load_state(self,state_path):
         """
@@ -96,10 +124,15 @@ class Trainer(DevModule):
             state_path : str, location of the sought-out state_dict
 
             returns : the loaded state_dict with remaining parameters
+
+            <<TODO : maybe the return is pointless>>
         """
         if(not os.path.exists(state_path)):
             raise ValueError(f'Path {state_path} not found, can\'t load state')
         state_dict = torch.load(state_path)
+        if(self.model.config != state_dict['model_config']):
+            print('WARNING ! Loaded model configuration and state model_config\
+                  do not match. This may generate errors.')
         self.model.load_state_dict(state_dict['model'])
         del state_dict['model']
         self.session_hash = state_dict['session']
@@ -121,10 +154,13 @@ class Trainer(DevModule):
                 - 'session' : contains self.session_hash
                 - 'optim' :optimizer
                 - 'scheduler : scheduler
+                - 'model_config' : json allowing one to reconstruct the model.
             Additionally, can contain logging info like last loss, epoch number, and others.
+            If you want a more complicated state, training_epoch should be overriden.
             name : str, name of the save file, overrides automatic one
             unique : bool, if to generate unique savename (with date)
         """
+        os.makedirs(self.state_save_loc,exist_ok=True)
 
         if (name is None):
             name=f"{self.model.__class__.__name__}_state_{self.session_hash}.pt"
@@ -135,21 +171,21 @@ class Trainer(DevModule):
 
         print('Saved training state')
 
-
-    def save_model(self, name=None):
+    def save_model(self, name:str=None):
         """
-            Saves model weights onto trainer model_save_loc.
+            Saves model weights onto trainer model_save_loc. Not necessarily useful since all the info
+            is contained in the saved state, but is sometimes practical.
         """
         if (name is None):
             name=f"{self.model.__class__.__name__}_{datetime.now().strftime('%H-%M_%d_%m')}.pt"
-
+        os.makedirs(self.model_save_loc,exist_ok=True)
         saveloc = os.path.join(self.model_save_loc,name)
         
         torch.save(self.model.state_dict(), saveloc)
         try :
-            torch.save(self.model.get_config(), os.path.join(self.model_save_loc,name[:-3]+'.config'))
+            torch.save(self.model.config, os.path.join(self.model_save_loc,name[:-3]+'.config'))
         except Exception as e:
-            print(f'''Problem when trying to get configuration of model : {e}. Make sure model.get_config()
+            print(f'''Problem when trying to get configuration of model : {e}. Make sure model.config
                   is defined.''')
             raise e
 
@@ -276,56 +312,62 @@ class Trainer(DevModule):
         data_dict={}
         data_dict['batch_log']=batch_log
         totbatch = len(train_loader)
-        data_dict['totbatch']=totbatch
+        
         for ep_incr in tqdm(range(epochs)):
-            epoch_loss,batch_log_loss,batchnum,n_aggreg=(0,0,0,0)
+            epoch_loss,batch_log_loss,batchnum,n_aggreg=[[],[],0,0]
             
-            self._reset_data_dict()
+            data_dict=self._reset_data_dict(data_dict)
             data_dict['epoch']=epoch
+            data_dict['totbatch']=totbatch
             for batchnum,batch_data in tqdm(enumerate(train_loader),total=totbatch) :
                 n_aggreg+=1
                 # Process the batch according to the model.
                 data_dict['batchnum']=batchnum
-                data_dict['time']=(epoch-1)*totbatch//batch_log+batchnum//batch_log
+                data_dict['time']=epoch*(totbatch//batch_log)+batchnum//batch_log
 
                 loss, data_dict = self.process_batch(batch_data,data_dict)
+                
+                epoch_loss.append(loss.item())
+                batch_log_loss.append(loss.item())
 
                 loss=loss/aggregate # Rescale loss if aggregating.
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.)
 
-                epoch_loss+=loss.item()*aggregate
-                batch_log_loss+=loss.item()*aggregate
                 
                 if(batchnum%batch_log==batch_log-1):
-                    self.writer.add_scalar('loss/train',batch_log_loss,data_dict['time'])
-                    batch_log_loss=0
+                    self.writer.add_scalar('loss/train',sum(batch_log_loss)/len(batch_log_loss),data_dict['time'])
+                    batch_log_loss=[]
 
                 if(n_aggreg%aggregate==aggregate-1):
                     n_aggreg=0
                     self.optim.step()
                     self.optim.zero_grad()
+                
+                self.scheduler.step(epoch+batchnum/totbatch)
 
-            self.scheduler.step()
+            
             # Log data
-            self.writer.add_scalar('ep-loss/train',epoch_loss,data_dict['time'])
+            self.writer.add_scalar('ep-loss/train',sum(epoch_loss)/len(epoch_loss),data_dict['epoch'])
             self.epoch_log(data_dict)
             
             # Reinitalize datadict here.
-            self._reset_data_dict()
+            data_dict=self._reset_data_dict(data_dict)
 
             if(valid_loader is not None):
                 with torch.no_grad():
                     self.model.eval()
-                    val_loss=0
-
+                    val_loss=[]
+                    data_dict['totbatch'] = len(valid_loader)
                     for (batchnum,batch_data) in enumerate(valid_loader):
                         data_dict['batchnum']=batchnum
-                        loss, data_dict = self.process_batch_valid(batch_data)
-                        val_loss+=loss.item()
+                        data_dict['time']=(epoch-1)*totbatch//batch_log+batchnum//batch_log
+
+                        loss, data_dict = self.process_batch_valid(batch_data,data_dict)
+                        val_loss.append(loss.item())
 
             # Log validation data
-            self.writer.add_scalar('ep-loss/valid',val_loss,data_dict['time'])
+            self.writer.add_scalar('ep-loss/valid',sum(val_loss)/len(val_loss),data_dict['epoch'])
             self.valid_log(data_dict)
 
             self.writer.flush()
@@ -335,13 +377,18 @@ class Trainer(DevModule):
 
             if ep_incr%save_every==0 :
                 state = dict(optim=self.optim.state_dict(),scheduler=self.scheduler.state_dict()
-                     ,model=self.model.state_dict(),session=self.session_hash,model_config=self.model.get_config())
+                     ,model=self.model.state_dict(),session=self.session_hash,model_config=self.model.config,
+                     name=self.model.__class__.__name__)
                 self.save_state(state,name=self.run_name,unique=unique)
 
-    def _reset_data_dict(self):
-        for k in self.data_dict:
-            if k not in ['epoch','batch_log','totbatch'] :
-                del self.data_dict[k]
+    def _reset_data_dict(self,data_dict):
+        keys = list(data_dict.keys())
+        for k in keys:
+            if k not in ['epoch','batch_log'] :
+                del data_dict[k]
+        
+        # Probably useless to return
+        return data_dict
     
     def __del__(self):
         self.writer.close()
