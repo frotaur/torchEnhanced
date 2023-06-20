@@ -47,10 +47,11 @@ class Trainer(DevModule):
     def __init__(self, model : nn.Module, optim :Optimizer =None, scheduler : lrsched._LRScheduler =None, 
                  model_save_loc=None,state_save_loc=None,device='cpu', run_name = None):
         super().__init__()
-        self.model = model 
-        self.model.to(device)
+        
+        self.to(device)
 
-        self.register_buffer('device_tens',torch.empty(1,device=device))
+        self.model = model.to(device)
+
 
         if(model_save_loc is None) :
             self.model_save_loc = os.path.join('.',f"{self.model.__class__.__name__}_weights")
