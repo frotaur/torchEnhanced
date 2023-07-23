@@ -1,7 +1,5 @@
 from pathlib import Path
-import json
-import os
-import torch
+import json, os, torch
 
 
 def load_string(file_name):

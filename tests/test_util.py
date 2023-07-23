@@ -1,6 +1,6 @@
 import torch,sys,pathlib
 sys.path.append(pathlib.Path(__file__).parent.parent.as_posix())
-print(sys.path)
+
 from src.torchenhanced.util import *
 
 
@@ -34,33 +34,33 @@ def test_color_comp_incomplete():
     from PIL import Image
     from torchvision import transforms as t
 
-    ntar=12
-    imgex=torch.clamp(torch.zeros((1,3,1,1)),0,1)
-    imgex[:,0]=140
-    imgex[:,1]=23
-    imgex[:,2]=23
-    print("==================================================")
-    # print("imgex shape : ",imgex.shape)
-    print("Initial : ",(imgex).squeeze())
-    imgex=convert_to_nbit(imgex/255.,ntar)
-    print("After : ",imgex.squeeze())
-    imgex=decode_from_nbit(imgex,ntar)
-    print("Decoded again : ",imgex.squeeze())
+    # ntar=12
+    # imgex=torch.clamp(torch.zeros((1,3,1,1)),0,1)
+    # imgex[:,0]=140
+    # imgex[:,1]=23
+    # imgex[:,2]=23
+    # print("==================================================")
+    # # print("imgex shape : ",imgex.shape)
+    # print("Initial : ",(imgex).squeeze())
+    # imgex=convert_to_nbit(imgex/255.,ntar)
+    # print("After : ",imgex.squeeze())
+    # imgex=decode_from_nbit(imgex,ntar)
+    # print("Decoded again : ",imgex.squeeze())
 
 
-    imgex= Image.open("Riffelsee.jpg")
-    imgex=t.ToTensor()(imgex)[None]
-    showTens(imgex)
-    imgex=rgb_to_yuv(imgex)
+    # imgex= Image.open("Riffelsee.jpg")
+    # imgex=t.ToTensor()(imgex)[None]
+    # showTens(imgex)
+    # imgex=rgb_to_yuv(imgex)
     
     
-    imgn = convert_to_nbit(imgex,ntar)
-    imgn = decode_from_nbit(imgn,ntar)
+    # imgn = convert_to_nbit(imgex,ntar)
+    # imgn = decode_from_nbit(imgn,ntar)
 
 
-    print("shape : ",imgex.shape)
+    # print("shape : ",imgex.shape)
 
-    showTens(yuv_to_rgb(imgn))
+    # showTens(yuv_to_rgb(imgn))
 
-    imgyuv = yuv_to_rgb(rgb_to_yuv(imgex))
-    print(f"BOUNDS : (maxy : {torch.max(imgyuv[:,0])},maxCb= {torch.max(imgyuv[:,1])}, maxCr= {torch.max(imgyuv[:,2])})")
+    # imgyuv = yuv_to_rgb(rgb_to_yuv(imgex))
+    # print(f"BOUNDS : (maxy : {torch.max(imgyuv[:,0])},maxCb= {torch.max(imgyuv[:,1])}, maxCr= {torch.max(imgyuv[:,2])})")

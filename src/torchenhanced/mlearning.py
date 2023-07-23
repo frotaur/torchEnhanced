@@ -1,6 +1,5 @@
 import torch.nn as nn
-import torch
-import os
+import torch, wandb, os
 from torch.utils.tensorboard import SummaryWriter
 import torch.optim.lr_scheduler as lrsched
 from torch.optim import Optimizer
@@ -15,20 +14,72 @@ class DevModule(nn.Module):
         Simply adds a method device() that returns
         the current device the module is on. Changes if
         self.to(...) is called.
+
+        args :
+        config : Dictionary that contains the key:value pairs needed to 
+        instantiate the model (essentially the arguments of the __init__ method).
     """
     def __init__(self):
         super().__init__()
 
         self.register_buffer('_devtens',torch.empty(0))
-    
+
     @property
     def device(self):
         return self._devtens.device
+
+    @property
+    def paranum(self):
+        return sum(p.numel() for p in self.parameters())
+    
+    @property
+    def config(self):
+        """
+            Returns a json-serializable dict containing the config of the model.
+            Essentially a key-value dictionary of the init arguments of the model.
+            Should be redefined in sub-classes.
+        """
+        return self._config
+
+
+class ConfigModule(DevModule):
+    """
+        Same as DevModule, but with a config property that
+        stores the necessary data to reconstruct the model.
+        Use preferably over DevModule, especially with use with Trainer.
+
+        args :
+        config : Dictionary that contains the key:value pairs needed to 
+        instantiate the model (i.e. the argument values of the __init__ method)
+    """
+    def __init__(self, config:dict):
+        super().__init__()
+
+        self._config = config
+        self._config['name'] = self.__class__.__name__
+
+    @property
+    def config(self):
+        """
+            Returns a json-serializable dict containing the config of the model.
+            Essentially a key-value dictionary of the init arguments of the model.
+            Should be redefined in sub-classes.
+        """
+        return self._config
 
 
 class Trainer(DevModule):
     """
         Mother class used to train models, exposing a host of useful functions.
+        Should be subclassed to be used, and the following methods should be redefined :
+            - process_batch, mandatory
+            - get_loaders, mandatory
+            - epoch_log, optional
+            - valid_log, optional
+            - process_batch_valid, mandatory if validation is used (i.e. get_loaders returns 2 loaders)
+        For logging, use wandb.log, which is already initialized. One should be logged in into the wandb
+        account to make the logging work. See wandb documentation for info on logging.
+            
 
         Parameters :
         model : Model to be trained
@@ -41,27 +92,27 @@ class Trainer(DevModule):
         state_save_loc : str or None(default), folder in which to save the training state, 
         used to resume training.
         device : torch.device, device on which to train the model
-        run_name : str, for tensorboard and saves, name of the training session
+        run_name : str, for wandb and saves, name of the training session
+        project_name : str, name of the project in which the run belongs
     """
 
     def __init__(self, model : nn.Module, optim :Optimizer =None, scheduler : lrsched._LRScheduler =None, 
-                 model_save_loc=None,state_save_loc=None,device='cpu', run_name = None):
+                 model_save_loc=None,state_save_loc=None,device:str ='cpu', run_name :str = None, 
+                 project_name :str = None):
         super().__init__()
         
         self.to(device)
-
         self.model = model.to(device)
-
 
         if(model_save_loc is None) :
             self.model_save_loc = os.path.join('.',f"{self.model.__class__.__name__}_weights")
         else :
-            self.model_save_loc = model_save_loc
+            self.model_save_loc = os.path.join(model_save_loc,f"{self.model.__class__.__name__}_weights")
         
         if(state_save_loc is None) :
             self.state_save_loc = os.path.join('.',f"{self.model.__class__.__name__}_state")
         else :
-            self.state_save_loc = state_save_loc
+            self.state_save_loc = os.path.join(state_save_loc,f"{self.model.__class__.__name__}_state")
         
         if(optim is None):
             self.optim = torch.optim.AdamW(self.model.parameters(),lr=1e-3)
@@ -72,9 +123,6 @@ class Trainer(DevModule):
             self.scheduler = lrsched.LinearLR(self.optim,start_factor=0.05,total_iters=4)
         else :
             self.scheduler = scheduler
-
-        for direc in [self.model_save_loc,self.state_save_loc]:
-            os.makedirs(direc,exist_ok=True)
         
 
         # Session hash, the date to not overwrite sessions
@@ -86,9 +134,25 @@ class Trainer(DevModule):
             self.run_name=run_name
             run_name = os.path.join('.','runs',run_name)
         
-        self.writer = SummaryWriter(run_name)
+        # Basic config, when sub-classing can add dataset and such
+        # Maybe useless
+        self.run_config = dict(model=self.model.__class__.__name__,
+                               lr_init=self.optim.param_groups[0]['lr'],
+                               scheduler = self.scheduler.__class__.__name__)
+        
+        self.run_id = wandb.util.generate_id() # For restoring the run
+        self.project_name = project_name
         
 
+    def change_lr(self, new_lr):
+        """
+            Changes the learning rate of the optimizer.
+            Might clash with scheduler ?
+        """
+
+        for g in self.optim.param_groups:
+            g['lr'] = new_lr
+        
     @staticmethod
     def config_from_state(state_path: str):
         """
@@ -115,18 +179,13 @@ class Trainer(DevModule):
 
         return model_name,config,weights
 
-    def load_state(self,state_path):
+    def load_state(self,state_path : str):
         """
             Loads trainer minimal trainer state (model,session_hash,optim,scheduler).
-            Can be overwritten in sub-class if there is more to the state of the
-            trainer.
 
             params : 
             state_path : str, location of the sought-out state_dict
 
-            returns : the loaded state_dict with remaining parameters
-
-            <<TODO : maybe the return is pointless>>
         """
         if(not os.path.exists(state_path)):
             raise ValueError(f'Path {state_path} not found, can\'t load state')
@@ -134,19 +193,16 @@ class Trainer(DevModule):
         if(self.model.config != state_dict['model_config']):
             print('WARNING ! Loaded model configuration and state model_config\
                   do not match. This may generate errors.')
+            
         self.model.load_state_dict(state_dict['model'])
-        del state_dict['model']
         self.session_hash = state_dict['session']
-        del state_dict['session']
         self.optim.load_state_dict(state_dict['optim'])
-        del state_dict['optim']
         self.scheduler.load_state_dict(state_dict['scheduler'])
-        del state_dict['scheduler']
+        self.run_id = state_dict['run_id']
+        # Maybe I need to load also the run_name, we'll see
 
-        return state_dict
 
-
-    def save_state(self,state_dict,name=None,unique=False):
+    def save_state(self,unique:bool=False):
         """
             Saves trainer state.
             Params : 
@@ -156,6 +212,7 @@ class Trainer(DevModule):
                 - 'optim' :optimizer
                 - 'scheduler : scheduler
                 - 'model_config' : json allowing one to reconstruct the model.
+                - 'run_id' : id of the run, for wandb
             Additionally, can contain logging info like last loss, epoch number, and others.
             If you want a more complicated state, training_epoch should be overriden.
             name : str, name of the save file, overrides automatic one
@@ -163,14 +220,28 @@ class Trainer(DevModule):
         """
         os.makedirs(self.state_save_loc,exist_ok=True)
 
-        if (name is None):
-            name=f"{self.model.__class__.__name__}_state_{self.session_hash}.pt"
+        # Create the state
+        try :
+            model_config = self.model.config
+        except AttributeError as e:
+            print(f'''Error while fetching model config ! 
+                    Make sure model.config is defined. (see ConfigModule doc).
+                    Continuing, but might generate errors while loading/save models)''')
+            model_config = None
+
+        state = dict(optim=self.optim.state_dict(),scheduler=self.scheduler.state_dict()
+            ,model=self.model.state_dict(),session=self.session_hash,model_config=model_config,
+            name=self.model.__class__.__name__, run_id=self.run_id)
+
+        name = self.run_name
         if (unique):
             name=name+'_'+datetime.now().strftime('%H-%M_%d_%m')
+
         saveloc = os.path.join(self.state_save_loc,name)
-        torch.save(state_dict,saveloc)
+        torch.save(state,saveloc)
 
         print('Saved training state')
+
 
     def save_model(self, name:str=None):
         """
@@ -203,7 +274,7 @@ class Trainer(DevModule):
             batch_data : whatever is returned by the dataloader
             data_dict : Dictionary containing necessary data, mainly
             for logging. Always contains the following key-values :
-                - time : float variable giving a value to the progression of the batches
+                - time : int variable giving a value to the progression of the batches
                 - batchnum : current batch number
                 - batch_log : batch interval in which we should log
                 - totbatch : total number of batches.
@@ -225,7 +296,7 @@ class Trainer(DevModule):
             batch_data : whatever is returned by the dataloader
             data_dict : Dictionary containing necessary data, mainly
             for logging. Always contains the following key-values :
-                - time : float variable giving a value to the progression of the batches
+                - time : int variable giving a value to the progression of the batches
                 - batchnum : current batch number
                 - batch_log : batch interval in which we should log
                 - totbatch : total number of batches.
@@ -256,7 +327,7 @@ class Trainer(DevModule):
         """
             To be (optionally) implemented in sub-class. Does the logging 
             at the epoch level, is called every epoch. Data_dict has (at least) key-values :
-                - time : float variable giving a value to the progression of the batches
+                - time : int variable giving a value to the progression of the batches
                 - batchnum : current batch number
                 - batch_log : batch interval in which we should log
                 - totbatch : total number of batches.
@@ -269,7 +340,7 @@ class Trainer(DevModule):
         """
             To be (optionally) implemented in sub-class. Does the logging 
             at the epoch level, is called every epoch. Data_dict has (at least) key-values :
-                - time : float variable giving a value to the progression of the batches
+                - time : int variable giving a value to the progression of the batches
                 - batchnum : current batch number
                 - batch_log : batch interval in which we should log
                 - totbatch : total number of batches.
@@ -278,9 +349,9 @@ class Trainer(DevModule):
         """
         pass
 
-    def train_epochs(self,epochs : int,*,save_every:int=50,batch_log:int=None,
-                     batch_size:int=32,aggregate:int=1,load_from:str=None,
-                     unique:bool=False,**kwargs):
+    def train_epochs(self,epochs : int,*,batch_sched:bool=False,save_every:int=50,
+                     batch_log:int=None,batch_size:int=32,aggregate:int=1,
+                     load_from:str=None,unique:bool=False,**kwargs):
         """
             Trains for specified epoch number. This method trains the model in a basic way,
             and does very basic logging. At the minimum, it requires process_batch and 
@@ -290,9 +361,12 @@ class Trainer(DevModule):
             and can be used by process_batch* functions for logging of advanced quantities.
             Params :
             epochs : number of epochs to train for
+            batch_sched : if True, scheduler steps (by a lower amount) between each batch.
+            Not that this use is deprecated, so it is recommended to keep False. For now, 
+            necessary for some Pytorch schedulers (cosine annealing).
             save_every : saves trainer state every 'save_every' epochs
             batch_log : If not none, will also log every batch_log batches, in addition to each epoch
-            batch_size : -
+            batch_size : batch size
             aggregate : how many batches to aggregate (effective batch_size is aggreg*batch_size)
             load_from : path to a trainer state_dict. Loads the state
                 of the trainer from file, then continues training the specified
@@ -300,8 +374,12 @@ class Trainer(DevModule):
             unique : if True, do not overwrites previous save states.
 
             <<<PROBLEM : scheduler step only works between epochs. Add an option to 
-            batch_step, with the value of the stepper should be good I think>>>
+            batch_sched, with the value of the stepper should be good I think>>>
         """
+        # Initiate logging
+        wandb.init(name=self.run_name,project=self.project_name,config=self.run_config,
+                   id = self.run_id,resume='allow')
+        
         if(os.path.isfile(str(load_from))):
             # Loads the trainer state
             self.load_state(load_from)
@@ -337,19 +415,21 @@ class Trainer(DevModule):
 
                 
                 if(batchnum%batch_log==batch_log-1):
-                    self.writer.add_scalar('loss/train',sum(batch_log_loss)/len(batch_log_loss),data_dict['time'])
+                    wandb.log({'batchloss/train':sum(batch_log_loss)/len(batch_log_loss)})
                     batch_log_loss=[]
 
                 if(n_aggreg%aggregate==aggregate-1):
                     n_aggreg=0
                     self.optim.step()
                     self.optim.zero_grad()
-                
-                self.scheduler.step(epoch+batchnum/totbatch)
+                if(batch_sched):
+                    self.scheduler.step(epoch+batchnum/totbatch)
 
+            if(not batch_sched):
+                self.scheduler.step()
             
             # Log data
-            self.writer.add_scalar('ep-loss/train',sum(epoch_loss)/len(epoch_loss),data_dict['epoch'])
+            wandb.log({'loss/train':sum(epoch_loss)/len(epoch_loss)})
             self.epoch_log(data_dict)
             
             # Reinitalize datadict here.
@@ -367,30 +447,25 @@ class Trainer(DevModule):
                         loss, data_dict = self.process_batch_valid(batch_data,data_dict)
                         val_loss.append(loss.item())
 
-            # Log validation data
-            self.writer.add_scalar('ep-loss/valid',sum(val_loss)/len(val_loss),data_dict['epoch'])
-            self.valid_log(data_dict)
-
-            self.writer.flush()
+                # Log validation data
+                wandb.log({'loss/valid':sum(val_loss)/len(val_loss)})
+                self.valid_log(data_dict)
 
             self.model.train()
             epoch+=1
 
-            if ep_incr%save_every==0 :
-                state = dict(optim=self.optim.state_dict(),scheduler=self.scheduler.state_dict()
-                     ,model=self.model.state_dict(),session=self.session_hash,model_config=self.model.config,
-                     name=self.model.__class__.__name__)
-                self.save_state(state,name=self.run_name,unique=unique)
+            if ep_incr%save_every==save_every-1 :
+                self.save_state(unique=unique)
+
+        wandb.finish()
 
     def _reset_data_dict(self,data_dict):
         keys = list(data_dict.keys())
         for k in keys:
             if k not in ['epoch','batch_log'] :
                 del data_dict[k]
-        
         # Probably useless to return
         return data_dict
     
-    def __del__(self):
-        self.writer.close()
-
+    # def __del__(self):
+    #     wandb.finish()
