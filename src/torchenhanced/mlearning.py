@@ -274,7 +274,7 @@ class Trainer(DevModule):
             batch_data : whatever is returned by the dataloader
             data_dict : Dictionary containing necessary data, mainly
             for logging. Always contains the following key-values :
-                - time : int variable giving a value to the progression of the batches
+                - stepnum : total number of steps (minibatches) so far
                 - batchnum : current batch number
                 - batch_log : batch interval in which we should log
                 - totbatch : total number of batches.
@@ -289,17 +289,18 @@ class Trainer(DevModule):
     def process_batch_valid(self,batch_data, data_dict : dict, **kwargs):
         """
             Redefine this in sub-classes. Should return the loss, as well as 
-            the data_dict (potentially updated). Can do logging and other things 
-            optionally. Loss is automatically logged, so no need to worry about it. 
+            the data_dict (potentially updated). Can do validation minibatch-level
+            logging, although it is discouraged. Proper use should be to collect the data
+            to be logged in data_dict, and then log it in valid_log (to log once per epoch)
+            Loss is automatically logged, so no need to worry about it. 
 
             params:
             batch_data : whatever is returned by the dataloader
             data_dict : Dictionary containing necessary data, mainly
             for logging. Always contains the following key-values :
-                - time : int variable giving a value to the progression of the batches
-                - batchnum : current batch number
-                - batch_log : batch interval in which we should log
-                - totbatch : total number of batches.
+                - batchnum : current validation mini-batch number
+                - batch_log : batch interval in which we should log (used for training batch-level logging)
+                - totbatch : total number of validation minibatches.
                 - epoch : current epoch
             data_dict can be modified to store running values, or any other value that might
             be important later. If data_dict is updated, this will persist through the next iteration
@@ -327,7 +328,7 @@ class Trainer(DevModule):
         """
             To be (optionally) implemented in sub-class. Does the logging 
             at the epoch level, is called every epoch. Data_dict has (at least) key-values :
-                - time : int variable giving a value to the progression of the batches
+                - stepnum : total number of steps (minibatches) so far
                 - batchnum : current batch number
                 - batch_log : batch interval in which we should log
                 - totbatch : total number of batches.
@@ -340,7 +341,7 @@ class Trainer(DevModule):
         """
             To be (optionally) implemented in sub-class. Does the logging 
             at the epoch level, is called every epoch. Data_dict has (at least) key-values :
-                - time : int variable giving a value to the progression of the batches
+                - stepnum : total number of steps (minibatches) so far
                 - batchnum : current batch number
                 - batch_log : batch interval in which we should log
                 - totbatch : total number of batches.
@@ -372,9 +373,6 @@ class Trainer(DevModule):
                 of the trainer from file, then continues training the specified
                 number of epochs.
             unique : if True, do not overwrites previous save states.
-
-            <<<PROBLEM : scheduler step only works between epochs. Add an option to 
-            batch_sched, with the value of the stepper should be good I think>>>
         """
         # Initiate logging
         wandb.init(name=self.run_name,project=self.project_name,config=self.run_config,
@@ -402,7 +400,7 @@ class Trainer(DevModule):
                 n_aggreg+=1
                 # Process the batch according to the model.
                 data_dict['batchnum']=batchnum
-                data_dict['time']=epoch*(totbatch//batch_log)+batchnum//batch_log
+                data_dict['stepnum']=(epoch)*totbatch+batchnum
 
                 loss, data_dict = self.process_batch(batch_data,data_dict)
                 
@@ -442,7 +440,7 @@ class Trainer(DevModule):
                     data_dict['totbatch'] = len(valid_loader)
                     for (batchnum,batch_data) in enumerate(valid_loader):
                         data_dict['batchnum']=batchnum
-                        data_dict['time']=(epoch-1)*totbatch//batch_log+batchnum//batch_log
+                        
 
                         loss, data_dict = self.process_batch_valid(batch_data,data_dict)
                         val_loss.append(loss.item())

@@ -44,15 +44,15 @@ class LinearTrainer(Trainer):
         pred = self.model(x) # (B,10)
         loss = F.cross_entropy(pred,y,reduction='mean') 
 
-        if(data_dict['time']%data_dict['batch_log']==data_dict['batch_log']-1):
+        if(data_dict['stepnum']%data_dict['batch_log']==data_dict['batch_log']-1):
             wandb.log({'loss':loss.item()}, step=data_dict['time'])
         
         return loss, data_dict
 
 # FOR MANUAL TESTING, COULDN'T FIGURE OUT HOW TO AUTOMATE IT
-# trainer = LinearTrainer(run_name='test_broken_question', project_name='AnewDawn', state_save_loc=os.path.join(curfold), model_save_loc=os.path.join(curfold))
-# trainer.load_state(os.path.join(curfold,'LinSimple_state/test_broken_question'))
-# trainer.train_epochs(epochs=5, batch_size=4, batch_log=500, save_every=1, val_log=2)
+trainer = LinearTrainer(run_name='test_broken_question', project_name='AnewDawn', state_save_loc=os.path.join(curfold), model_save_loc=os.path.join(curfold))
+trainer.load_state(os.path.join(curfold,'LinSimple_state/test_broken_question'))
+trainer.train_epochs(epochs=5, batch_size=4, batch_log=500, save_every=1, val_log=2)
 
 def test_Trainer_config():
     ma = LinSimple(hidden=32,out=15)
