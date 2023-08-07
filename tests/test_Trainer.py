@@ -28,13 +28,13 @@ class LinSimple(ConfigModule):
     
 class LinearTrainer(Trainer):
 
-    def __init__(self, run_name: str = None, project_name: str = None, state_save_loc=None,model_save_loc=None):
+    def __init__(self, run_name: str = None, project_name: str = None, state_save_loc=None):
 
-        super().__init__(LinSimple(), run_name=run_name, project_name=project_name,state_save_loc=state_save_loc,model_save_loc=model_save_loc)
+        super().__init__(LinSimple(), run_name=run_name, project_name=project_name,state_save_loc=state_save_loc)
 
         self.dataset =Subset(MNIST(os.path.join(curfold,'data'),download=True,transform=t.ToTensor()),range(100))
     
-    def get_loaders(self, batch_size):
+    def get_loaders(self, batch_size, num_workers=0):
         return DataLoader(self.dataset, batch_size=batch_size, shuffle=True), None
     
     def process_batch(self, batch_data, data_dict: dict, **kwargs):
@@ -44,15 +44,25 @@ class LinearTrainer(Trainer):
         pred = self.model(x) # (B,10)
         loss = F.cross_entropy(pred,y,reduction='mean') 
 
-        if(data_dict['stepnum']%data_dict['batch_log']==data_dict['batch_log']-1):
-            wandb.log({'loss':loss.item()}, step=data_dict['time'])
+        if(data_dict['stepnum']%data_dict['step_log']==data_dict['step_log']-1):
+            wandb.log({'loss':loss.item()}, step=data_dict['stepnum'])
         
         return loss, data_dict
 
 # FOR MANUAL TESTING, COULDN'T FIGURE OUT HOW TO AUTOMATE IT
-trainer = LinearTrainer(run_name='test_broken_question', project_name='AnewDawn', state_save_loc=os.path.join(curfold), model_save_loc=os.path.join(curfold))
-trainer.load_state(os.path.join(curfold,'LinSimple_state/test_broken_question'))
-trainer.train_epochs(epochs=5, batch_size=4, batch_log=500, save_every=1, val_log=2)
+# trainer = LinearTrainer(run_name='test_broken_question', project_name='AnewDawn', state_save_loc=os.path.join(curfold))
+# trainer.load_state(os.path.join(curfold,'AnewDawn','state','test_broken_question.state'))
+# trainer.train_epochs(epochs=5, batch_size=4, step_log=500, save_every=1, val_log=2)
+
+def test_Save_Weights():
+    lintra = LinearTrainer(run_name='test_save_weights', project_name='AnewDawn', state_save_loc=os.path.join(curfold))
+    lintra.save_state()
+
+    Trainer.save_model_from_state(state_path=os.path.join(curfold,'AnewDawn','state','test_save_weights.state'),
+                                 save_dir=os.path.join(curfold,'AnewDawn'),name='testJEFF')
+
+    assert os.path.isfile(os.path.join(curfold,'AnewDawn','testJEFF.pt')), "Weights not found"
+    assert os.path.isfile(os.path.join(curfold,'AnewDawn','testJEFF.config')), "Config not found"
 
 def test_Trainer_config():
     ma = LinSimple(hidden=32,out=15)
@@ -62,4 +72,3 @@ def test_Trainer_config():
     assert config == {'hidden':32, 'out':15, 'name':'LinSimple'}, f"Invalid config : {config}"
 
 # Probably need to add more unit_tests...
-

@@ -1,3 +1,4 @@
 from . import util
-from .mlearning import *
+from .modules import *
+from .Trainer import Trainer
 from .CosineWarmup import CosineWarmup

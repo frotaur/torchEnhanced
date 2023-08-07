@@ -4,66 +4,7 @@ import torch.optim.lr_scheduler as lrsched
 from torch.optim import Optimizer
 from datetime import datetime
 from tqdm import tqdm
-
-
-class DevModule(nn.Module):
-    """
-        Extremely small wrapper for nn.Module.
-        Simply adds a method device() that returns
-        the current device the module is on. Changes if
-        self.to(...) is called.
-
-        args :
-        config : Dictionary that contains the key:value pairs needed to 
-        instantiate the model (essentially the arguments of the __init__ method).
-    """
-    def __init__(self):
-        super().__init__()
-
-        self.register_buffer('_devtens',torch.empty(0))
-
-    @property
-    def device(self):
-        return self._devtens.device
-
-    @property
-    def paranum(self):
-        return sum(p.numel() for p in self.parameters())
-    
-    @property
-    def config(self):
-        """
-            Returns a json-serializable dict containing the config of the model.
-            Essentially a key-value dictionary of the init arguments of the model.
-            Should be redefined in sub-classes.
-        """
-        return self._config
-
-
-class ConfigModule(DevModule):
-    """
-        Same as DevModule, but with a config property that
-        stores the necessary data to reconstruct the model.
-        Use preferably over DevModule, especially with use with Trainer.
-
-        args :
-        config : Dictionary that contains the key:value pairs needed to 
-        instantiate the model (i.e. the argument values of the __init__ method)
-    """
-    def __init__(self, config:dict):
-        super().__init__()
-
-        self._config = config
-        self._config['name'] = self.__class__.__name__
-
-    @property
-    def config(self):
-        """
-            Returns a json-serializable dict containing the config of the model.
-            Essentially a key-value dictionary of the init arguments of the model.
-            Should be redefined in sub-classes.
-        """
-        return self._config
+from .modules import DevModule, ConfigModule
 
 
 class Trainer(DevModule):
@@ -86,32 +27,32 @@ class Trainer(DevModule):
         scheduler : Scheduler to be used. Can be provided only if using
         non-default optimizer. Must be initialized with aforementioned 
         optimizer. Default : warmup for 4 epochs from 1e-6.
-        model_save_loc : str or None(default), folder in which to save the raw model weights
-        state_save_loc : str or None(default), folder in which to save the training state, 
-        used to resume training.
+        state_save_loc : str or None(default), folder in which to store data 
+        pertaining to training, such as the training state, wandb folder and model weights.
         device : torch.device, device on which to train the model
         run_name : str, for wandb and saves, name of the training session
         project_name : str, name of the project in which the run belongs
     """
 
     def __init__(self, model : nn.Module, optim :Optimizer =None, scheduler : lrsched._LRScheduler =None, 
-                 model_save_loc=None,state_save_loc=None,device:str ='cpu', run_name :str = None, 
-                 project_name :str = None):
+                 state_save_loc=None,device:str ='cpu', run_name :str = None,project_name :str = None):
         super().__init__()
         
         self.to(device)
         self.model = model.to(device)
 
-        if(model_save_loc is None) :
-            self.model_save_loc = os.path.join('.',f"{self.model.__class__.__name__}_weights")
-        else :
-            self.model_save_loc = os.path.join(model_save_loc,f"{self.model.__class__.__name__}_weights")
         
         if(state_save_loc is None) :
-            self.state_save_loc = os.path.join('.',f"{self.model.__class__.__name__}_state")
+            self.data_fold = os.path.join('.',project_name)
+            self.state_save_loc = os.path.join(self.data_fold,"state")
+            self.model_save_loc = os.path.join(self.data_fold,"weights")
         else :
-            self.state_save_loc = os.path.join(state_save_loc,f"{self.model.__class__.__name__}_state")
+            self.data_fold = os.path.join(state_save_loc,project_name)#
+            
+            self.state_save_loc = os.path.join(state_save_loc,project_name,"state")
+            self.model_save_loc = os.path.join(state_save_loc,project_name,"weights")
         
+        os.makedirs(self.data_fold,exist_ok=True)
         if(optim is None):
             self.optim = torch.optim.AdamW(self.model.parameters(),lr=1e-3)
         else :
@@ -151,31 +92,6 @@ class Trainer(DevModule):
         for g in self.optim.param_groups:
             g['lr'] = new_lr
         
-    @staticmethod
-    def config_from_state(state_path: str):
-        """
-            Given the path to a trainer state, returns a tuple (config, weights)
-            for the saved model. The model can then be initialized by using config 
-            as its __init__ arguments, and load the state_dict from weights.
-
-            params : 
-            state_path : path of the saved trainer state
-
-            returns: 3-uple
-            model_name : str, the saved model class name
-            config : dict, the saved model config
-            weights : torch.state_dict, the model's state_dict
-
-        """
-        if(not os.path.exists(state_path)):
-            raise ValueError(f'Path {state_path} not found, can\'t load config from it')
-
-        state_dict = torch.load(state_path)
-        config = state_dict['model_config']
-        model_name = state_dict['name']
-        weights = state_dict['model']
-
-        return model_name,config,weights
 
     def load_state(self,state_path : str):
         """
@@ -198,6 +114,8 @@ class Trainer(DevModule):
         self.scheduler.load_state_dict(state_dict['scheduler'])
         self.run_id = state_dict['run_id']
         # Maybe I need to load also the run_name, we'll see
+
+        print('LOAD OF SUCCESSFUL !')
 
 
     def save_state(self,unique:bool=False):
@@ -235,31 +153,70 @@ class Trainer(DevModule):
         if (unique):
             name=name+'_'+datetime.now().strftime('%H-%M_%d_%m')
 
+        name = name + '.state'
         saveloc = os.path.join(self.state_save_loc,name)
         torch.save(state,saveloc)
 
         print('Saved training state')
 
 
-    def save_model(self, name:str=None):
+    @staticmethod
+    def save_model_from_state(state_path:str,save_dir:str='.',name:str=None):
         """
-            Saves model weights onto trainer model_save_loc. Not necessarily useful since all the info
-            is contained in the saved state, but is sometimes practical.
-        """
-        if (name is None):
-            name=f"{self.model.__class__.__name__}_{datetime.now().strftime('%H-%M_%d_%m')}.pt"
-        os.makedirs(self.model_save_loc,exist_ok=True)
-        saveloc = os.path.join(self.model_save_loc,name)
-        
-        torch.save(self.model.state_dict(), saveloc)
-        try :
-            torch.save(self.model.config, os.path.join(self.model_save_loc,name[:-3]+'.config'))
-        except Exception as e:
-            print(f'''Problem when trying to get configuration of model : {e}. Make sure model.config
-                  is defined.''')
-            raise e
+            Extract model weights and configuration, and saves two files in the specified directory,
+            the weights (.pt) and a .config file containing the model configuration, which can be loaded
+            as a dictionary with torch.load.
 
-        print(f'Saved checkpoint : {name}')
+            Args :
+            state_path : path to the trainer state
+            save_dir : directory in which to save the model
+            name : name of the model, if None, will be model_name_date.pt
+        """
+        namu, config, weights = Trainer.config_from_state(state_path,device='cpu')
+
+        if (name is None):
+            name=f"{namu}_{datetime.now().strftime('%H-%M_%d_%m')}"
+        name=name+'.pt'
+        os.makedirs(save_dir,exist_ok=True)
+        saveloc = os.path.join(save_dir,name)
+        
+        torch.save(weights, saveloc)
+
+        torch.save(config, os.path.join(save_dir,name[:-3]+'.config'))
+
+        print(f'Saved weights of {name} at {save_dir}/{name}  !')
+
+
+    @staticmethod
+    def config_from_state(state_path: str, device: str=None):
+        """
+            Given the path to a trainer state, returns a tuple (config, weights)
+            for the saved model. The model can then be initialized by using config 
+            as its __init__ arguments, and load the state_dict from weights.
+
+            args : 
+            state_path : path of the saved trainer state
+            device : device on which to load. Default one if None specified
+
+            returns: 3-uple
+            model_name : str, the saved model class name
+            config : dict, the saved model config
+            weights : torch.state_dict, the model's state_dict
+
+        """
+        if(not os.path.exists(state_path)):
+            raise ValueError(f'Path {state_path} not found, can\'t load config from it')
+        
+        if(device is None):
+            state_dict = torch.load(state_path)
+        else :
+            state_dict = torch.load(state_path,map_location=device)
+
+        config = state_dict['model_config']
+        model_name = state_dict['name']
+        weights = state_dict['model']
+
+        return model_name,config,weights
 
 
     def process_batch(self,batch_data,data_dict : dict,**kwargs):
@@ -274,7 +231,9 @@ class Trainer(DevModule):
             for logging. Always contains the following key-values :
                 - stepnum : total number of steps (minibatches) so far
                 - batchnum : current batch number
-                - batch_log : batch interval in which we should log
+                - batch_log : batch interval in which we should log (DEPRECATED)
+                - step_log : number of steps (minibatches) interval in which we should log 
+                (REPLACES deprecated batch_log)
                 - totbatch : total number of batches.
             data_dict can be modified to store running values, or any other value that might
             be important later. If data_dict is updated, this will persist through the next iteration
@@ -297,7 +256,9 @@ class Trainer(DevModule):
             data_dict : Dictionary containing necessary data, mainly
             for logging. Always contains the following key-values :
                 - batchnum : current validation mini-batch number
-                - batch_log : batch interval in which we should log (used for training batch-level logging)
+                - batch_log : batch interval in which we should log (DEPRECATED)
+                - step_log : number of steps (minibatches) interval in which we should log 
+                (REPLACES deprecated batch_log)
                 - totbatch : total number of validation minibatches.
                 - epoch : current epoch
             data_dict can be modified to store running values, or any other value that might
@@ -309,7 +270,7 @@ class Trainer(DevModule):
         raise NotImplementedError('process_batch_valid should be implemented in Trainer sub-class')
 
 
-    def get_loaders(self,batch_size):
+    def get_loaders(self,batch_size, num_workers=0):
         """
             Builds the dataloader needed for training and validation.
             Should be re-implemented in subclass.
@@ -328,7 +289,9 @@ class Trainer(DevModule):
             at the epoch level, is called every epoch. Data_dict has (at least) key-values :
                 - stepnum : total number of steps (minibatches) so far
                 - batchnum : current batch number
-                - batch_log : batch interval in which we should log
+                - batch_log : batch interval in which we should log (DEPRECATED)
+                - step_log : number of steps (minibatches) interval in which we should log 
+                (REPLACES deprecated batch_log)
                 - totbatch : total number of batches.
                 - epoch : current epoch
             And any number of additional values, depending on what process_batch does.
@@ -341,7 +304,9 @@ class Trainer(DevModule):
             at the epoch level, is called every epoch. Data_dict has (at least) key-values :
                 - stepnum : total number of steps (minibatches) so far
                 - batchnum : current batch number
-                - batch_log : batch interval in which we should log
+                - batch_log : batch interval in which we should log (DEPRECATED)
+                - step_log : number of steps (minibatches) interval in which we should log 
+                (REPLACES deprecated batch_log)
                 - totbatch : total number of batches.
                 - epoch : current epoch
             And any number of additional values, depending on what process_batch does.
@@ -349,8 +314,8 @@ class Trainer(DevModule):
         pass
 
     def train_epochs(self,epochs : int,*,batch_sched:bool=False,save_every:int=50,
-                     batch_log:int=None,batch_size:int=32,aggregate:int=1,
-                     load_from:str=None,unique:bool=False,**kwargs):
+                     step_log:int=None,batch_log:int=None,batch_size:int=32,num_workers:int=0,
+                     aggregate:int=1, load_from:str=None,unique:bool=False,**kwargs):
         """
             Trains for specified epoch number. This method trains the model in a basic way,
             and does very basic logging. At the minimum, it requires process_batch and 
@@ -364,8 +329,10 @@ class Trainer(DevModule):
             Not that this use is deprecated, so it is recommended to keep False. For now, 
             necessary for some Pytorch schedulers (cosine annealing).
             save_every : saves trainer state every 'save_every' epochs
-            batch_log : If not none, will also log every batch_log batches, in addition to each epoch
+            step_log : If not none, will also log every step_log minibatches, in addition to each epoch
+            batch_log : same as step_log, DEPRECATED
             batch_size : batch size
+            num_workers : number of workers in dataloader
             aggregate : how many batches to aggregate (effective batch_size is aggreg*batch_size)
             load_from : path to a trainer state_dict. Loads the state
                 of the trainer from file, then continues training the specified
@@ -374,22 +341,28 @@ class Trainer(DevModule):
         """
         # Initiate logging
         wandb.init(name=self.run_name,project=self.project_name,config=self.run_config,
-                   id = self.run_id,resume='allow')
+                   id = self.run_id,resume='allow',dir=self.data_fold)
         
         if(os.path.isfile(str(load_from))):
             # Loads the trainer state
             self.load_state(load_from)
+        else :
+            print('Specified "load_from" directory non-existent; continuining with model from scratch.')
         
-        train_loader,valid_loader = self.get_loaders(batch_size)
+        train_loader,valid_loader = self.get_loaders(batch_size,num_workers=num_workers)
         self.model.train()
         epoch=self.scheduler.last_epoch
         print('Number of batches/epoch : ',len(train_loader))
         data_dict={}
-        data_dict['batch_log']=batch_log
+
+        if(step_log is None):
+            step_log=batch_log # FOR BACKWARD COMPATIBILITY, TO BE DEPRECATED
+        data_dict['batch_log']=step_log
+        data_dict['step_log']=step_log
         totbatch = len(train_loader)
-        
+        step_loss=[]
         for ep_incr in tqdm(range(epochs)):
-            epoch_loss,batch_log_loss,batchnum,n_aggreg=[[],[],0,0]
+            epoch_loss,batchnum,n_aggreg=[[],0,0]
             
             data_dict=self._reset_data_dict(data_dict)
             data_dict['epoch']=epoch
@@ -403,16 +376,16 @@ class Trainer(DevModule):
                 loss, data_dict = self.process_batch(batch_data,data_dict)
                 
                 epoch_loss.append(loss.item())
-                batch_log_loss.append(loss.item())
+                step_loss.append(loss.item())
 
                 loss=loss/aggregate # Rescale loss if aggregating.
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.)
 
                 
-                if(batchnum%batch_log==batch_log-1):
-                    wandb.log({'batchloss/train':sum(batch_log_loss)/len(batch_log_loss)})
-                    batch_log_loss=[]
+                if(data_dict['stepnum']%step_log==step_log-1):
+                    wandb.log({'steploss/train':sum(step_loss)/len(step_loss)},commit=False)
+                    step_loss=[]
 
                 if(n_aggreg%aggregate==aggregate-1):
                     n_aggreg=0
@@ -458,7 +431,7 @@ class Trainer(DevModule):
     def _reset_data_dict(self,data_dict):
         keys = list(data_dict.keys())
         for k in keys:
-            if k not in ['epoch','batch_log'] :
+            if k not in ['epoch','batch_log', 'step_log'] :
                 del data_dict[k]
         # Probably useless to return
         return data_dict
