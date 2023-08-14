@@ -103,7 +103,7 @@ class Trainer(DevModule):
         """
         if(not os.path.exists(state_path)):
             raise ValueError(f'Path {state_path} not found, can\'t load state')
-        state_dict = torch.load(state_path)
+        state_dict = torch.load(state_path,map_location=self.device)
         if(self.model.config != state_dict['model_config']):
             print('WARNING ! Loaded model configuration and state model_config\
                   do not match. This may generate errors.')
@@ -314,8 +314,9 @@ class Trainer(DevModule):
         pass
 
     def train_epochs(self,epochs : int,*,batch_sched:bool=False,save_every:int=50,
-                     step_log:int=None,batch_log:int=None,batch_size:int=32,num_workers:int=0,
-                     aggregate:int=1, load_from:str=None,unique:bool=False,**kwargs):
+                     backup_every: int=None,step_log:int=None,batch_log:int=None,
+                     batch_size:int=32,num_workers:int=0,aggregate:int=1, load_from:str=None,
+                     **kwargs):
         """
             Trains for specified epoch number. This method trains the model in a basic way,
             and does very basic logging. At the minimum, it requires process_batch and 
@@ -424,7 +425,10 @@ class Trainer(DevModule):
             epoch+=1
 
             if ep_incr%save_every==save_every-1 :
-                self.save_state(unique=unique)
+                self.save_state(unique=False)
+            
+            if ep_incr%backup_every==backup_every-1 :
+                self.save_state(unique=True)
 
         wandb.finish()
 
