@@ -347,8 +347,9 @@ class Trainer(DevModule):
         if(os.path.isfile(str(load_from))):
             # Loads the trainer state
             self.load_state(load_from)
-        else :
-            print('Specified "load_from" directory non-existent; continuining with model from scratch.')
+        elif(load_from is not None) :
+            print(f'Specified "load_from" directory {load_from} non-existent; \
+                  continuing with model from scratch.')
         
         train_loader,valid_loader = self.get_loaders(batch_size,num_workers=num_workers)
         self.model.train()
