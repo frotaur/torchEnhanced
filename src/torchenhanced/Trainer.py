@@ -118,10 +118,10 @@ class Trainer(DevModule):
         print('LOAD OF SUCCESSFUL !')
 
 
-    def save_state(self,unique:bool=False):
+    def save_state(self,epoch:int = None):
         """
-            Saves trainer state.
-            Params : 
+            Saves trainer state. Describe by the following dictionary :
+
             state_dict : dict, contains at least the following key-values:
                 - 'model' : contains model.state_dict
                 - 'session' : contains self.session_hash
@@ -129,10 +129,11 @@ class Trainer(DevModule):
                 - 'scheduler : scheduler
                 - 'model_config' : json allowing one to reconstruct the model.
                 - 'run_id' : id of the run, for wandb
-            Additionally, can contain logging info like last loss, epoch number, and others.
+
             If you want a more complicated state, training_epoch should be overriden.
-            name : str, name of the save file, overrides automatic one
-            unique : bool, if to generate unique savename (with date)
+
+            Args :
+            epoch : int, if not None, will append the epoch number to the state name.
         """
         os.makedirs(self.state_save_loc,exist_ok=True)
 
@@ -150,8 +151,8 @@ class Trainer(DevModule):
             name=self.model.__class__.__name__, run_id=self.run_id)
 
         name = self.run_name
-        if (unique):
-            name=name+'_'+datetime.now().strftime('%H-%M_%d_%m')
+        if (epoch is not None):
+            name=name+'_'+f'{epoch}'
 
         name = name + '.state'
         saveloc = os.path.join(self.state_save_loc,name)
@@ -338,7 +339,6 @@ class Trainer(DevModule):
             load_from : path to a trainer state_dict. Loads the state
                 of the trainer from file, then continues training the specified
                 number of epochs.
-            unique : if True, do not overwrites previous save states.
         """
         # Initiate logging
         wandb.init(name=self.run_name,project=self.project_name,config=self.run_config,
@@ -426,10 +426,10 @@ class Trainer(DevModule):
             epoch+=1
 
             if ep_incr%save_every==save_every-1 :
-                self.save_state(unique=False)
+                self.save_state()
             
             if ep_incr%backup_every==backup_every-1 :
-                self.save_state(unique=True)
+                self.save_state(epoch=epoch)
 
         wandb.finish()
 
