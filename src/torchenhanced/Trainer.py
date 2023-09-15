@@ -82,6 +82,11 @@ class Trainer(DevModule):
         self.run_id = wandb.util.generate_id() # For restoring the run
         self.project_name = project_name
         
+        # Universal attributes for logging purposes
+        self.stepnum = 0
+        self.batchnum = None
+        self.step_log = None
+        self.totbatch = None
 
     def change_lr(self, new_lr):
         """
@@ -195,7 +200,7 @@ class Trainer(DevModule):
             for the saved model. The model can then be initialized by using config 
             as its __init__ arguments, and load the state_dict from weights.
 
-            args : 
+            Args :
             state_path : path of the saved trainer state
             device : device on which to load. Default one if None specified
 
@@ -226,19 +231,14 @@ class Trainer(DevModule):
             the data_dict (potentially updated). Can do logging and other things 
             optionally. Loss is automatically logged, so no need to worry about it. 
 
-            params:
+            Args :
             batch_data : whatever is returned by the dataloader
-            data_dict : Dictionary containing necessary data, mainly
-            for logging. Always contains the following key-values :
-                - stepnum : total number of steps (minibatches) so far
-                - batchnum : current batch number
-                - batch_log : batch interval in which we should log (DEPRECATED)
-                - step_log : number of steps (minibatches) interval in which we should log 
-                (REPLACES deprecated batch_log)
-                - totbatch : total number of batches.
-            data_dict can be modified to store running values, or any other value that might
-            be important later. If data_dict is updated, this will persist through the next iteration
-            and call of process_batch.
+            data_dict : DEPRECATED ! Avoid using it. Use class attributes instead. 
+            Default class attributes, automatically maintained by the trainer, are :
+                - self.batchnum : current validation mini-batch number
+                - self.step_log : number of steps (minibatches) interval in which we should log 
+                - self.totbatch : total number of validation minibatches.
+                - self.epoch : current epoch
 
             Returns : 2-uple, (loss, data_dict)
         """
@@ -249,22 +249,17 @@ class Trainer(DevModule):
             Redefine this in sub-classes. Should return the loss, as well as 
             the data_dict (potentially updated). Can do validation minibatch-level
             logging, although it is discouraged. Proper use should be to collect the data
-            to be logged in data_dict, and then log it in valid_log (to log once per epoch)
+            to be logged in a class attribute, and then log it in valid_log (to log once per epoch)
             Loss is automatically logged, so no need to worry about it. 
 
-            params:
+            Args :
             batch_data : whatever is returned by the dataloader
-            data_dict : Dictionary containing necessary data, mainly
-            for logging. Always contains the following key-values :
-                - batchnum : current validation mini-batch number
-                - batch_log : batch interval in which we should log (DEPRECATED)
-                - step_log : number of steps (minibatches) interval in which we should log 
-                (REPLACES deprecated batch_log)
-                - totbatch : total number of validation minibatches.
-                - epoch : current epoch
-            data_dict can be modified to store running values, or any other value that might
-            be important later. If data_dict is updated, this will persist through the next iteration
-            and call of process_batch.
+            data_dict : DEPRECATED ! Avoid using it. Use class attributes instead. 
+            Default class attributes, automatically maintained by the trainer, are :
+                - self.batchnum : current validation mini-batch number
+                - self.step_log : number of steps (minibatches) interval in which we should log 
+                - self.totbatch : total number of validation minibatches.
+                - self.epoch : current epoch
 
             Returns : 2-uple, (loss, data_dict)
         """
@@ -276,7 +271,7 @@ class Trainer(DevModule):
             Builds the dataloader needed for training and validation.
             Should be re-implemented in subclass.
 
-            Params :
+            Args :
             batch_size
 
             Returns :
@@ -287,36 +282,37 @@ class Trainer(DevModule):
     def epoch_log(self,data_dict):
         """
             To be (optionally) implemented in sub-class. Does the logging 
-            at the epoch level, is called every epoch. Data_dict has (at least) key-values :
-                - stepnum : total number of steps (minibatches) so far
-                - batchnum : current batch number
-                - batch_log : batch interval in which we should log (DEPRECATED)
-                - step_log : number of steps (minibatches) interval in which we should log 
-                (REPLACES deprecated batch_log)
-                - totbatch : total number of batches.
-                - epoch : current epoch
-            And any number of additional values, depending on what process_batch does.
+            at the epoch level, is called every epoch. 
+
+            Args :
+            data_dict : DEPRECATED ! Avoid using it. Use class attributes instead. 
+            Default class attributes, automatically maintained by the trainer, are :
+                - self.batchnum : current validation mini-batch number
+                - self.step_log : number of steps (minibatches) interval in which we should log 
+                - self.totbatch : total number of validation minibatches.
+                - self.epoch : current epoch
         """
         pass
 
     def valid_log(self,data_dict):
         """
             To be (optionally) implemented in sub-class. Does the logging 
-            at the epoch level, is called every epoch. Data_dict has (at least) key-values :
-                - stepnum : total number of steps (minibatches) so far
-                - batchnum : current batch number
-                - batch_log : batch interval in which we should log (DEPRECATED)
-                - step_log : number of steps (minibatches) interval in which we should log 
-                (REPLACES deprecated batch_log)
-                - totbatch : total number of batches.
-                - epoch : current epoch
-            And any number of additional values, depending on what process_batch does.
+            at the epoch level, is called every epoch. 
+
+            Args :
+            data_dict : DEPRECATED ! Avoid using it. Use class attributes instead. 
+                Default class attributes, automatically maintained by the trainer, are :
+                    - self.batchnum : current validation mini-batch number
+                    - self.step_log : number of steps (minibatches) interval in which we should log 
+                    - self.totbatch : total number of validation minibatches.
+                    - self.epoch : current epoch
         """
         pass
 
     def train_epochs(self,epochs : int,*,batch_sched:bool=False,save_every:int=50,
                      backup_every: int=None,step_log:int=None,batch_log:int=None,
                      batch_size:int=32,num_workers:int=0,aggregate:int=1, load_from:str=None,
+                     batch_tqdm:bool=True,
                      **kwargs):
         """
             Trains for specified epoch number. This method trains the model in a basic way,
@@ -353,28 +349,39 @@ class Trainer(DevModule):
         
         train_loader,valid_loader = self.get_loaders(batch_size,num_workers=num_workers)
         self.model.train()
-        epoch=self.scheduler.last_epoch
+        self.epoch=self.scheduler.last_epoch
         print('Number of batches/epoch : ',len(train_loader))
         data_dict={}
 
         if(step_log is None):
             step_log=batch_log # FOR BACKWARD COMPATIBILITY, TO BE DEPRECATED
+        
         data_dict['batch_log']=step_log
-        data_dict['step_log']=step_log
-        totbatch = len(train_loader)
+        data_dict['step_log']=step_log # to be deprecated 
+
+        self.step_log = step_log
         step_loss=[]
         for ep_incr in tqdm(range(epochs)):
             epoch_loss,batchnum,n_aggreg=[[],0,0]
             
             data_dict=self._reset_data_dict(data_dict)
-            data_dict['epoch']=epoch
-            data_dict['totbatch']=totbatch
-            for batchnum,batch_data in tqdm(enumerate(train_loader),total=totbatch) :
+            data_dict['epoch']=self.epoch
+            self.totbatch = len(train_loader)
+            data_dict['totbatch']=self.totbatch
+
+            # Iterate with or without tqdm
+            if(batch_tqdm):
+                iter_on=tqdm(enumerate(train_loader),total=self.totbatch)
+            else :
+                iter_on=enumerate(train_loader)
+            
+            for batchnum,batch_data in iter_on :
                 n_aggreg+=1
                 # Process the batch according to the model.
-                data_dict['batchnum']=batchnum
-                data_dict['stepnum']=(epoch)*totbatch+batchnum
-
+                self.batchnum=batchnum
+                data_dict['batchnum']=self.batchnum
+                self.stepnum=(self.epoch)*self.totbatch+batchnum
+                data_dict['stepnum']=self.stepnum
                 loss, data_dict = self.process_batch(batch_data,data_dict)
                 
                 epoch_loss.append(loss.item())
@@ -385,7 +392,7 @@ class Trainer(DevModule):
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.)
 
                 
-                if(data_dict['stepnum']%step_log==step_log-1):
+                if(self.stepnum%step_log==step_log-1):
                     wandb.log({'steploss/train':sum(step_loss)/len(step_loss)},commit=False)
                     step_loss=[]
 
@@ -394,7 +401,7 @@ class Trainer(DevModule):
                     self.optim.step()
                     self.optim.zero_grad()
                 if(batch_sched):
-                    self.scheduler.step(epoch+batchnum/totbatch)
+                    self.scheduler.step(self.epoch+batchnum/self.totbatch)
 
             if(not batch_sched):
                 self.scheduler.step()
@@ -411,10 +418,11 @@ class Trainer(DevModule):
                     self.model.eval()
                     val_loss=[]
                     data_dict['totbatch'] = len(valid_loader)
+                    self.totbatch = len(valid_loader) # For now we use same totbatch for train and valid, might wanna change that in the future
                     for (batchnum,batch_data) in enumerate(valid_loader):
-                        data_dict['batchnum']=batchnum
+                        self.batchnum=batchnum
+                        data_dict['batchnum']=self.batchnum
                         
-
                         loss, data_dict = self.process_batch_valid(batch_data,data_dict)
                         val_loss.append(loss.item())
 
@@ -423,13 +431,14 @@ class Trainer(DevModule):
                 self.valid_log(data_dict)
 
             self.model.train()
-            epoch+=1
+            self.epoch+=1
 
             if ep_incr%save_every==save_every-1 :
                 self.save_state()
             
-            if ep_incr%backup_every==backup_every-1 :
-                self.save_state(epoch=epoch)
+            if backup_every is not None:
+                if ep_incr%backup_every==backup_every-1 :
+                    self.save_state(epoch=self.epoch)
 
         wandb.finish()
 
@@ -440,6 +449,4 @@ class Trainer(DevModule):
                 del data_dict[k]
         # Probably useless to return
         return data_dict
-    
-    # def __del__(self):
-    #     wandb.finish()
+

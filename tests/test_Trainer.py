@@ -44,15 +44,20 @@ class LinearTrainer(Trainer):
         pred = self.model(x) # (B,10)
         loss = F.cross_entropy(pred,y,reduction='mean') 
 
+        assert self.stepnum==data_dict['stepnum'], f"Stepnum mismatch {self.stepnum} vs {data_dict['stepnum']}"
+        assert self.step_log==data_dict['step_log'], f"Step_log mismatch {self.step_log} vs {data_dict['step_log']}"
+        assert self.epoch == data_dict['epoch'], f"Epoch mismatch {self.epoch} vs {data_dict['epoch']}"
+        assert self.batchnum == data_dict['batchnum'], f"Batchnum mismatch {self.batchnum} vs {data_dict['batchnum']}"
+
         if(data_dict['stepnum']%data_dict['step_log']==data_dict['step_log']-1):
             wandb.log({'loss':loss.item()}, step=data_dict['stepnum'])
         
         return loss, data_dict
 
 # FOR MANUAL TESTING, COULDN'T FIGURE OUT HOW TO AUTOMATE IT
-# trainer = LinearTrainer(run_name='test_broken_question', project_name='AnewDawn', state_save_loc=os.path.join(curfold))
-# trainer.load_state(os.path.join(curfold,'AnewDawn','state','test_broken_question.state'))
-# trainer.train_epochs(epochs=5, batch_size=4, step_log=500, save_every=1, val_log=2)
+trainer = LinearTrainer(run_name='test_broken_question', project_name='AnewDawn', state_save_loc=os.path.join(curfold))
+trainer.load_state(os.path.join(curfold,'AnewDawn','state','test_broken_question.state'))
+trainer.train_epochs(epochs=5, batch_size=4, step_log=500, save_every=1, val_log=2)
 
 def test_Save_Weights():
     lintra = LinearTrainer(run_name='test_save_weights', project_name='AnewDawn', state_save_loc=os.path.join(curfold))
