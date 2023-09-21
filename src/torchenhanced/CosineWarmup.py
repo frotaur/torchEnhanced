@@ -17,6 +17,9 @@ class _enable_get_lr_call:
 class CosineWarmup(lrsched.CosineAnnealingWarmRestarts):
     """
         LR-scheduler with cosine learning rate, and a warmup phase additionally.
+        Either input values for number of BATCHES, and .step() each batch, or input
+        values for EPOCHS, and .step(epoch+batch/total_batches) each batch. This is less
+        than ideal in my opinion, but the Trainer integrates that behavior (for now)
 
         Parameters :
         optimizer : torch.optim.Optimizer
