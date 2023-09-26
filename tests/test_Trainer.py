@@ -50,14 +50,15 @@ class LinearTrainer(Trainer):
         assert self.batchnum == data_dict['batchnum'], f"Batchnum mismatch {self.batchnum} vs {data_dict['batchnum']}"
 
         if(data_dict['stepnum']%data_dict['step_log']==data_dict['step_log']-1):
-            wandb.log({'loss':loss.item()}, step=data_dict['stepnum'])
+            wandb.log({'lossme':loss.item()},commit=False)
         
         return loss, data_dict
 
 # FOR MANUAL TESTING, COULDN'T FIGURE OUT HOW TO AUTOMATE IT
-trainer = LinearTrainer(run_name='test_broken_question', project_name='AnewDawn', state_save_loc=os.path.join(curfold))
-trainer.load_state(os.path.join(curfold,'AnewDawn','state','test_broken_question.state'))
-trainer.train_epochs(epochs=5, batch_size=4, step_log=500, save_every=1, val_log=2)
+trainer = LinearTrainer(run_name='test_broken_question', project_name='test_torchenhanced', state_save_loc=os.path.join(curfold))
+if(os.path.exists(os.path.join(curfold,'test_torchenhanced','state','test_broken_question.state'))):
+    trainer.load_state(os.path.join(curfold,'test_torchenhanced','state','test_broken_question.state'))
+trainer.train_epochs(epochs=30, batch_size=4, step_log=5, save_every=1, val_log=2)
 
 def test_Save_Weights():
     lintra = LinearTrainer(run_name='test_save_weights', project_name='AnewDawn', state_save_loc=os.path.join(curfold))

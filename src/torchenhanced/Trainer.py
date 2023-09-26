@@ -225,7 +225,7 @@ class Trainer(DevModule):
         return model_name,config,weights
 
 
-    def process_batch(self,batch_data,data_dict : dict,**kwargs):
+    def process_batch(self,batch_data,data_dict : dict = None,**kwargs):
         """
             Redefine this in sub-classes. Should return the loss, as well as 
             the data_dict (potentially updated). Can do logging and other things 
@@ -244,11 +244,11 @@ class Trainer(DevModule):
         """
         raise NotImplementedError('process_batch should be implemented in Trainer sub-class')
 
-    def process_batch_valid(self,batch_data, data_dict : dict, **kwargs):
+    def process_batch_valid(self,batch_data, data_dict : dict = None, **kwargs):
         """
             Redefine this in sub-classes. Should return the loss, as well as 
-            the data_dict (potentially updated). Can do validation minibatch-level
-            logging, although it is discouraged. Proper use should be to collect the data
+            the data_dict (potentially updated). There should be NO logging done
+            inside this function, only in valid_log. Proper use should be to collect the data
             to be logged in a class attribute, and then log it in valid_log (to log once per epoch)
             Loss is automatically logged, so no need to worry about it. 
 
@@ -279,10 +279,11 @@ class Trainer(DevModule):
         """
         raise NotImplementedError('get_loaders should be redefined in Trainer sub-class')
 
-    def epoch_log(self,data_dict):
+    def epoch_log(self,data_dict :dict = None):
         """
             To be (optionally) implemented in sub-class. Does the logging 
-            at the epoch level, is called every epoch. 
+            at the epoch level, is called every epoch. Only log using commit=False,
+            because of sync issues with the epoch x-axis.
 
             Args :
             data_dict : DEPRECATED ! Avoid using it. Use class attributes instead. 
@@ -294,10 +295,12 @@ class Trainer(DevModule):
         """
         pass
 
-    def valid_log(self,data_dict):
+    def valid_log(self,data_dict = None):
         """
             To be (optionally) implemented in sub-class. Does the logging 
-            at the epoch level, is called every epoch. 
+            at the epoch level, is called every epoch. Only log using commit=False,
+            because of sync issues with the epoch x-axis.
+
 
             Args :
             data_dict : DEPRECATED ! Avoid using it. Use class attributes instead. 
@@ -336,18 +339,29 @@ class Trainer(DevModule):
                 of the trainer from file, then continues training the specified
                 number of epochs.
         """
-        # Initiate logging
-        wandb.init(name=self.run_name,project=self.project_name,config=self.run_config,
-                   id = self.run_id,resume='allow',dir=self.data_fold)
-        
+
+        # Maybe remove this option ? Probably better just to load manually
         if(os.path.isfile(str(load_from))):
             # Loads the trainer state
             self.load_state(load_from)
         elif(load_from is not None) :
             print(f'Specified "load_from" directory {load_from} non-existent; \
                   continuing with model from scratch.')
+    
+        # Initiate logging
+        wandb.init(name=self.run_name,project=self.project_name,config=self.run_config,
+                   id = self.run_id,resume='allow',dir=self.data_fold)
+        
+        # Define the custom x axis metric, epochs
+        wandb.define_metric("epochs")
+        # For all plots, we plot against the epoch by default
+        wandb.define_metric("*", step_metric='epochs')
+
+
         
         train_loader,valid_loader = self.get_loaders(batch_size,num_workers=num_workers)
+        validate = valid_loader is not None
+
         self.model.train()
         self.epoch=self.scheduler.last_epoch
         print('Number of batches/epoch : ',len(train_loader))
@@ -361,6 +375,8 @@ class Trainer(DevModule):
 
         self.step_log = step_log
         step_loss=[]
+
+        
         for ep_incr in tqdm(range(epochs)):
             epoch_loss,batchnum,n_aggreg=[[],0,0]
             
@@ -374,7 +390,8 @@ class Trainer(DevModule):
                 iter_on=tqdm(enumerate(train_loader),total=self.totbatch)
             else :
                 iter_on=enumerate(train_loader)
-            
+
+            # Epoch of Training
             for batchnum,batch_data in iter_on :
                 n_aggreg+=1
                 # Process the batch according to the model.
@@ -394,6 +411,7 @@ class Trainer(DevModule):
                 
                 if(self.stepnum%step_log==step_log-1):
                     wandb.log({'steploss/train':sum(step_loss)/len(step_loss)},commit=False)
+                    wandb.log({'epochs': self.epoch+batchnum/self.totbatch},commit=True) # Fractional epoch
                     step_loss=[]
 
                 if(n_aggreg%aggregate==aggregate-1):
@@ -406,14 +424,8 @@ class Trainer(DevModule):
             if(not batch_sched):
                 self.scheduler.step()
             
-            # Log data
-            wandb.log({'loss/train':sum(epoch_loss)/len(epoch_loss)})
-            self.epoch_log(data_dict)
-            
-            # Reinitalize datadict here.
-            data_dict=self._reset_data_dict(data_dict)
-
-            if(valid_loader is not None):
+            # Epoch of validation
+            if(validate):
                 with torch.no_grad():
                     self.model.eval()
                     val_loss=[]
@@ -426,12 +438,22 @@ class Trainer(DevModule):
                         loss, data_dict = self.process_batch_valid(batch_data,data_dict)
                         val_loss.append(loss.item())
 
+                self.model.train()
+    
+            self.epoch+=1 # Epoch is finished
+
+            # Log training at epoch level
+            wandb.log({'loss/train':sum(epoch_loss)/len(epoch_loss)},commit=False)
+            self.epoch_log(data_dict)
+
+            if(validate):
                 # Log validation data
-                wandb.log({'loss/valid':sum(val_loss)/len(val_loss)})
+                wandb.log({'loss/valid':sum(val_loss)/len(val_loss)},commit=False)
                 self.valid_log(data_dict)
 
-            self.model.train()
-            self.epoch+=1
+            # Add the x-axis tick and commit
+            wandb.log({'epochs': self.epoch},commit=True)
+
 
             if ep_incr%save_every==save_every-1 :
                 self.save_state()
