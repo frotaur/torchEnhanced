@@ -510,7 +510,6 @@ class Trainer(DevModule):
                 # Process the batch according to the model.
                 self.batchnum=batchnum
                 _, step_loss, n_aggreg = self._step_batch(batch_data,False,[],step_loss,n_aggreg, aggregate)
-                self._update_x_axis(epoch_mode=False)
 
                 self.scheduler.step()
                 
