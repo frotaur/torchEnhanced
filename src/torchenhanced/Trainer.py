@@ -426,7 +426,7 @@ class Trainer(DevModule):
     
 
             # Log training at epoch level
-            wandb.log({'loss/train':sum(epoch_loss)/len(epoch_loss)},commit=False)
+            wandb.log({'loss/train_epoch':sum(epoch_loss)/len(epoch_loss)},commit=False)
             self.epoch_log()
                 
             self._update_x_axis(epoch_mode=True)
@@ -570,7 +570,7 @@ class Trainer(DevModule):
 
         
         if(self.do_batch_log):
-            wandb.log({'steploss/train':sum(step_loss)/len(step_loss)},commit=False)
+            wandb.log({'loss/train_step':sum(step_loss)/len(step_loss)},commit=False)
             self._update_x_axis(epoch_mode=epoch_mode)
             step_loss=[]
             self.do_batch_log=False
@@ -591,11 +591,11 @@ class Trainer(DevModule):
 
         self.totbatch = len(valid_loader) # For now we use same totbatch for train and valid, might wanna change that in the future
         if(batch_tqdm):
-            print('Validation : ')
+            print('------ Validation ------')
             iter_on=tqdm(enumerate(valid_loader),total=self.totbatch)
         else:
             iter_on=enumerate(valid_loader)
-            
+
         for (v_batchnum,v_batch_data) in iter_on:
             self.batchnum=v_batchnum
             
