@@ -420,7 +420,7 @@ class Trainer(DevModule):
             
             # Epoch of validation
             if(validate):
-                self._validate(valid_loader)
+                self._validate(valid_loader,batch_tqdm)
                 self.model.train()
                 self.valid_log()
     
@@ -494,7 +494,7 @@ class Trainer(DevModule):
         self.stepnum = 0 # This is the current instance number of steps, using for when to log save etc
 
         while not steps_completed:
-            epoch_loss,n_aggreg=[[],0]
+            n_aggreg=0
             
             self.totbatch = len(train_loader)
 
@@ -509,7 +509,7 @@ class Trainer(DevModule):
             for batchnum,batch_data in iter_on :
                 # Process the batch according to the model.
                 self.batchnum=batchnum
-                epoch_loss, step_loss, n_aggreg = self._step_batch(batch_data,False,epoch_loss,step_loss,n_aggreg, aggregate)
+                _, step_loss, n_aggreg = self._step_batch(batch_data,False,[],step_loss,n_aggreg, aggregate)
                 self._update_x_axis(epoch_mode=False)
 
                 self.scheduler.step()
@@ -517,7 +517,7 @@ class Trainer(DevModule):
 
                 # Validation if applicable
                 if(validate and self.stepnum%valid_every==0):
-                    self._validate(valid_loader)
+                    self._validate(valid_loader,batch_tqdm)
                     self.valid_log()
                     self._update_x_axis(epoch_mode=False)
                     self.model.train()
@@ -583,14 +583,20 @@ class Trainer(DevModule):
         return epoch_loss,step_loss,n_aggreg
 
     @torch.no_grad()
-    def _validate(self,valid_loader)->None:
+    def _validate(self,valid_loader, batch_tqdm)->None:
         self.model.eval()
         val_loss=[]
         t_totbatch = self.totbatch
         t_batchnum = self.batchnum
 
         self.totbatch = len(valid_loader) # For now we use same totbatch for train and valid, might wanna change that in the future
-        for (v_batchnum,v_batch_data) in enumerate(valid_loader):
+        if(batch_tqdm):
+            print('Validation : ')
+            iter_on=tqdm(enumerate(valid_loader),total=self.totbatch)
+        else:
+            iter_on=enumerate(valid_loader)
+            
+        for (v_batchnum,v_batch_data) in iter_on:
             self.batchnum=v_batchnum
             
             loss = self.process_batch_valid(v_batch_data)
