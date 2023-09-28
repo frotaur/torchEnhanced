@@ -50,7 +50,9 @@ class ConfigModule(DevModule):
         super().__init__()
 
         self._config = config
-        self._config['name'] = self.__class__.__name__
+
+        self.class_name = self.__class__.__name__ # Use this instead if, at time of saving, you need the name.
+        # self._config['name'] = self.__class__.__name__ # Decided against using name in config, it defeats the purpose.
 
     @property
     def config(self):
