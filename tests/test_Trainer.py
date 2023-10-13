@@ -9,7 +9,7 @@ from torchvision.datasets import MNIST
 import torch.nn.functional as F
 from torchvision import transforms as t
 from src.torchenhanced import Trainer, DevModule, ConfigModule
-import wandb, os
+import  os,time
 
 curfold = pathlib.Path(__file__).parent
 
@@ -27,12 +27,13 @@ class LinSimple(ConfigModule):
         return self.layer(x)
     
 class LinearTrainer(Trainer):
-    def __init__(self, run_name: str = None, project_name: str = None, state_save_loc=None,reach_plateau=100):
+    def __init__(self, run_name: str = None, project_name: str = None, state_save_loc=None,reach_plateau=100,run_config={}):
         model = LinSimple()
         opti = torch.optim.Adam(model.parameters(),lr=1e-3)
         schedo = lrsched.LinearLR(opti,start_factor=0.01,end_factor=1,total_iters=reach_plateau)
 
-        super().__init__(model,optim=opti,scheduler=schedo, run_name=run_name, project_name=project_name,state_save_loc=state_save_loc)
+        super().__init__(model,optim=opti,scheduler=schedo, run_name=run_name, 
+                         project_name=project_name,state_save_loc=state_save_loc,run_config=run_config)
 
         self.dataset =Subset(MNIST(os.path.join(curfold,'data'),download=True,transform=t.ToTensor()),range(100))
     
@@ -53,8 +54,8 @@ class LinearTrainer(Trainer):
         # assert self.batchnum == data_dict['batchnum'], f"Batchnum mismatch {self.batchnum} vs {data_dict['batchnum']}"
 
         if(self.do_batch_log):
-            wandb.log({'lossme/train':loss.item()},commit=False)
-            wandb.log({'other/lr':self.scheduler.get_last_lr()[0]},commit=False)
+            self.logger.log({'lossme/train':loss.item()},commit=False)
+            self.logger.log({'other/lr':self.scheduler.get_last_lr()[0]},commit=False)
         
         return loss
     
@@ -70,17 +71,18 @@ class LinearTrainer(Trainer):
         return loss
     
     def valid_log(self):
-        wandb.log({'lossme/valid':sum(self.loss_val)/len(self.loss_val)},commit=False)
+        self.logger.log({'lossme/valid':sum(self.loss_val)/len(self.loss_val)},commit=False)
         self.loss_val = []
         
 
 # FOR MANUAL TESTING, COULDN'T FIGURE OUT HOW TO AUTOMATE IT
 #EPOCHS :
-trainer = LinearTrainer(run_name='test_epochs', project_name='test_torchenhanced', state_save_loc=os.path.join(curfold),reach_plateau=200)
+trainer = LinearTrainer(run_name='test_epochs', project_name='test_torchenhanced', 
+                        state_save_loc=os.path.join(curfold),reach_plateau=200, run_config={'manamajeff':True})
 trainer.change_lr(1e-4)
 if(os.path.exists(os.path.join(curfold,'test_torchenhanced','state','test_epochs.state'))):
     trainer.load_state(os.path.join(curfold,'test_torchenhanced','state','test_epochs.state'))
-
+time.sleep(2)
 
 trainer.train_epochs(epochs=100, batch_size=10, step_log=30, save_every=60,aggregate=2,batch_sched=True)
 
@@ -91,6 +93,7 @@ trainer.change_lr(1e-4)
 if(os.path.exists(os.path.join(curfold,'test_torchenhanced','state','test_steps.state'))):
     trainer.load_state(os.path.join(curfold,'test_torchenhanced','state','test_steps.state'))
 
+time.sleep(2)
 trainer.train_steps(steps=1000, batch_size=10, step_log=30, save_every=60,aggregate=2, valid_every=100)
 
 def test_Save_Weights():

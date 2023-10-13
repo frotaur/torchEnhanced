@@ -34,10 +34,12 @@ class Trainer(DevModule):
         device : torch.device, device on which to train the model
         run_name : str, for wandb and saves, name of the training session
         project_name : str, name of the project in which the run belongs
+        run_config : dict, dictionary of hyperparameters (any). Will be viewable in wandb.
     """
 
-    def __init__(self, model : nn.Module, optim :Optimizer =None, scheduler : lrsched._LRScheduler =None, 
-                 state_save_loc=None,device:str ='cpu', run_name :str = None,project_name :str = None):
+    def __init__(self, model : nn.Module, optim :Optimizer =None, scheduler : lrsched._LRScheduler =None,*, 
+                 state_save_loc=None,device:str ='cpu', run_name :str = None,project_name :str = None,
+                 run_config : dict = {}):
         super().__init__()
         
         self.to(device)
@@ -75,11 +77,8 @@ class Trainer(DevModule):
             self.run_name=run_name
             run_name = os.path.join('.','runs',run_name)
         
-        # Basic config, when sub-classing can add dataset and such
-        # Maybe useless
         self.run_config = dict(model=self.model.__class__.__name__,
-                               lr_init=self.optim.param_groups[0]['lr'],
-                               scheduler = self.scheduler.__class__.__name__)
+                               **run_config)
         
         self.run_id = wandb.util.generate_id() # For restoring the run
         self.project_name = project_name
@@ -93,6 +92,8 @@ class Trainer(DevModule):
         self.totbatch = None
         self.do_batch_log = False
 
+        # Used for logging instead of wandb.log, useful if wandb not imported
+        self.logger = None
     def change_lr(self, new_lr):
         """
             Changes the learning rate of the optimizer.
@@ -103,7 +104,7 @@ class Trainer(DevModule):
             g['lr'] = new_lr
         
 
-    def load_state(self,state_path : str):
+    def load_state(self,state_path : str, strict: bool=True):
         """
             Loads trainer minimal trainer state (model,session_hash,optim,scheduler).
 
@@ -117,11 +118,14 @@ class Trainer(DevModule):
         if(self.model.config != state_dict['model_config']):
             print('WARNING ! Loaded model configuration and state model_config\
                   do not match. This may generate errors.')
-            
-        self.model.load_state_dict(state_dict['model'])
+        assert self.model.class_name == state_dict['model_name'], f'Loaded model {state_dict["model_name"]} mismatch with current: {self.model.class_name}!'
+        assert self.optim.__class__.__name__ == state_dict['optim_name'], f'Loaded optimizer : {state_dict["optim_name"]} mismatch with current: {self.optim.__class__.__name__} !'
+        assert self.scheduler.__class__.__name__ == state_dict['scheduler_name'], f'Loaded scheduler : {state_dict["scheduler_name"]} mismatch with current: {self.optim.__class__.__name__} !'
+
+        self.model.load_state_dict(state_dict['model_state'],strict=strict)
         self.session_hash = state_dict['session']
-        self.optim.load_state_dict(state_dict['optim'])
-        self.scheduler.load_state_dict(state_dict['scheduler'])
+        self.optim.load_state_dict(state_dict['optim_state'])
+        self.scheduler.load_state_dict(state_dict['scheduler_state'])
         self.run_id = state_dict['run_id']
         self.steps_done = state_dict.get('steps_done',0)
         self.epochs = state_dict.get('epochs',0)
@@ -159,10 +163,11 @@ class Trainer(DevModule):
                     Continuing, but might generate errors while loading/save models)''')
             model_config = None
 
-        state = dict(optim=self.optim.state_dict(),scheduler=self.scheduler.state_dict()
-            ,model=self.model.state_dict(),session=self.session_hash,model_config=model_config,
-            name=self.model.class_name, run_id=self.run_id, steps_done=self.steps_done,
-            epochs=self.epochs)
+        state = dict(
+        optim_state=self.optim.state_dict(),scheduler_state=self.scheduler.state_dict(),model_state=self.model.state_dict(),
+        model_name=self.model.class_name,optim_name=self.optim.__class__.__name__,scheduler_name=self.scheduler.__class__.__name__,
+        model_config=model_config,session=self.session_hash,run_id=self.run_id, steps_done=self.steps_done,epochs=self.epochs
+        )
 
         name = self.run_name
         if (epoch is not None):
@@ -201,9 +206,40 @@ class Trainer(DevModule):
 
         print(f'Saved weights of {name} at {save_dir}/{name}  !')
 
+    @staticmethod
+    def opti_names_from_state(state_path: str,device='cpu'):
+        """
+            Given the path to a trainer state, returns a 2-tuple (opti_config, scheduler_config),
+            where each config is a tuple of the name of the optimizer, and its state_dict.
+            Usually useful only if you forgot which optimizer you used, but load_state should
+            be used instead usually.
+            
+            Args :
+            state_path : path of the saved trainer state
+            device : device on which to load state
+
+            Returns :
+            2-uple, (optim_config, scheduler_config), where *_config = (name, state_dict)
+
+            Example of use :
+            get name from opti_config[0]. Use it with eval (or hardcoded) to get the class,
+            instanciante : 
+            optim = torch.optim.AdamW(model.parameters(),lr=1e-3)
+            optim.load_state_dict(opti_config[1])
+        """
+        if(not os.path.exists(state_path)):
+            raise ValueError(f'Path {state_path} not found, can\'t load config from it')
+
+        state_dict = torch.load(state_path,map_location=device)
+        opti_name = state_dict['optim_name']
+        opti_state = state_dict['optim_state']
+        sched_name = state_dict['sched_name']
+        sched_state = state_dict['sched_state']
+
+        return (opti_name,opti_state),(sched_name,sched_state)
 
     @staticmethod
-    def config_from_state(state_path: str, device: str=None):
+    def config_from_state(state_path: str,device: str=None):
         """
             Given the path to a trainer state, returns a tuple (config, weights)
             for the saved model. The model can then be initialized by using config 
@@ -215,8 +251,8 @@ class Trainer(DevModule):
 
             returns: 3-uple
             model_name : str, the saved model class name
-            config : dict, the saved model config
-            weights : torch.state_dict, the model's state_dict
+            config : dict, the saved model config (instanciate with element_name(**config))
+            state_dict : torch.state_dict, the model's state_dict (load with .load_state_dict(weights))
 
         """
         if(not os.path.exists(state_path)):
@@ -229,7 +265,7 @@ class Trainer(DevModule):
 
         config = state_dict['model_config']
         model_name = state_dict['name']
-        weights = state_dict['model']
+        weights = state_dict['model_state']
 
         return model_name,config,weights
 
@@ -359,14 +395,14 @@ class Trainer(DevModule):
                   continuing with model from scratch.')
     
         # Initiate logging
-        wandb.init(name=self.run_name,project=self.project_name,config=self.run_config,
+        self.logger = wandb.init(name=self.run_name,project=self.project_name,config=self.run_config,
                    id = self.run_id,resume='allow',dir=self.data_fold)
         
         # Define the custom x axis metric, epochs
-        wandb.define_metric("batches",hidden=True)
-        wandb.define_metric("epochs",hidden=True)
+        self.logger.define_metric("batches",hidden=True)
+        self.logger.define_metric("epochs",hidden=True)
         # For all plots, we plot against the epoch by default
-        wandb.define_metric("*", step_metric='epochs')
+        self.logger.define_metric("*", step_metric='epochs')
 
 
         
@@ -426,7 +462,7 @@ class Trainer(DevModule):
     
 
             # Log training at epoch level
-            wandb.log({'loss/train_epoch':sum(epoch_loss)/len(epoch_loss)},commit=False)
+            self.logger.log({'loss/train_epoch':sum(epoch_loss)/len(epoch_loss)},commit=False)
             self.epoch_log()
                 
             self._update_x_axis(epoch_mode=True)
@@ -434,7 +470,7 @@ class Trainer(DevModule):
             # Save and backup when applicable
             self._save_and_backup(curstep=ep_incr,save_every=save_every,backup_every=backup_every)
 
-        wandb.finish()
+        self.logger.finish()
 
 
     def train_steps(self,steps : int,batch_size:int,*,save_every:int=50,
@@ -467,14 +503,14 @@ class Trainer(DevModule):
         """
     
         # Initiate logging
-        wandb.init(name=self.run_name,project=self.project_name,config=self.run_config,
+        self.logger = wandb.init(name=self.run_name,project=self.project_name,config=self.run_config,
                    id = self.run_id,resume='allow',dir=self.data_fold)
         
         # Define the custom x axis metrics
-        wandb.define_metric("epochs",hidden=True)
-        wandb.define_metric("batches",hidden=True)
+        self.logger.define_metric("epochs",hidden=True)
+        self.logger.define_metric("batches",hidden=True)
         # For all plots, we plot against the batches by default, since we do step training
-        wandb.define_metric("*", step_metric='batches')
+        self.logger.define_metric("*", step_metric='batches')
 
 
         
@@ -545,11 +581,11 @@ class Trainer(DevModule):
             epoch_mode : bool, whether default x-axis is epoch or not
         """
         if(epoch_mode):
-            wandb.log({'batches': self.steps_done},commit=False)
-            wandb.log({'epochs': self.epochs},commit=True)
+            self.logger.log({'batches': self.steps_done},commit=False)
+            self.logger.log({'epochs': self.epochs},commit=True)
         else :
-            wandb.log({'epochs': self.epochs},commit=False)
-            wandb.log({'batches': self.steps_done},commit=True)
+            self.logger.log({'epochs': self.epochs},commit=False)
+            self.logger.log({'batches': self.steps_done},commit=True)
 
     def _step_batch(self,batch_data,epoch_mode,epoch_loss,step_loss,n_aggreg, aggregate):
         """
@@ -569,7 +605,7 @@ class Trainer(DevModule):
 
         
         if(self.do_batch_log):
-            wandb.log({'loss/train_step':sum(step_loss)/len(step_loss)},commit=False)
+            self.logger.log({'loss/train_step':sum(step_loss)/len(step_loss)},commit=False)
             self._update_x_axis(epoch_mode=epoch_mode)
             step_loss=[]
             self.do_batch_log=False
@@ -605,7 +641,7 @@ class Trainer(DevModule):
         self.batchnum=t_batchnum
 
         # Log validation data
-        wandb.log({'loss/valid':sum(val_loss)/len(val_loss)},commit=False)
+        self.logger.log({'loss/valid':sum(val_loss)/len(val_loss)},commit=False)
     
     def _save_and_backup(self,curstep,save_every,backup_every):
         if curstep%save_every==save_every-1 :
