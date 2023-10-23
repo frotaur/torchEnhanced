@@ -129,6 +129,7 @@ class Trainer(DevModule):
         self.run_id = state_dict['run_id']
         self.steps_done = state_dict.get('steps_done',0)
         self.epochs = state_dict.get('epochs',0)
+        self.run_config = state_dict.get('run_config',{'model':self.model.__class__.__name__})
         # Maybe I need to load also the run_name, we'll see
 
         print('LOAD OF SUCCESSFUL !')
@@ -166,18 +167,20 @@ class Trainer(DevModule):
         state = dict(
         optim_state=self.optim.state_dict(),scheduler_state=self.scheduler.state_dict(),model_state=self.model.state_dict(),
         model_name=self.model.class_name,optim_name=self.optim.__class__.__name__,scheduler_name=self.scheduler.__class__.__name__,
-        model_config=model_config,session=self.session_hash,run_id=self.run_id, steps_done=self.steps_done,epochs=self.epochs
+        model_config=model_config,session=self.session_hash,run_id=self.run_id, steps_done=self.steps_done,epochs=self.epochs,
+        run_config=self.run_config
         )
 
         name = self.run_name
         if (epoch is not None):
-            name=name+'_'+f'{epoch}'
+            os.makedirs(os.path.join(self.state_save_loc,'backups'),exist_ok=True)
+            name=os.path.join('backups',name+'_'+f'{epoch:.2f}')
 
         name = name + '.state'
         saveloc = os.path.join(self.state_save_loc,name)
         torch.save(state,saveloc)
 
-        print('Saved training state')
+        print(f'Saved training state at {datetime.now().strftime("%H-%M_%d_%m")}')
 
 
     @staticmethod
@@ -255,6 +258,8 @@ class Trainer(DevModule):
             state_dict : torch.state_dict, the model's state_dict (load with .load_state_dict(weights))
 
         """
+        print('WARNING : Deprecated, will be removed in next version')
+        print('For model config, use model_config_from_state instead')
         if(not os.path.exists(state_path)):
             raise ValueError(f'Path {state_path} not found, can\'t load config from it')
         
@@ -264,11 +269,62 @@ class Trainer(DevModule):
             state_dict = torch.load(state_path,map_location=device)
 
         config = state_dict['model_config']
-        model_name = state_dict['name']
+        model_name = state_dict['model_name']
         weights = state_dict['model_state']
 
         return model_name,config,weights
 
+    @staticmethod
+    def model_config_from_state(state_path: str,device: str=None):
+        """
+            Given the path to a trainer state, returns a tuple (config, weights)
+            for the saved model. The model can then be initialized by using config 
+            as its __init__ arguments, and load the state_dict from weights.
+
+            Args :
+            state_path : path of the saved trainer state
+            device : device on which to load. Default one if None specified
+
+            returns: 3-uple
+            model_name : str, the saved model class name
+            config : dict, the saved model config (instanciate with element_name(**config))
+            state_dict : torch.state_dict, the model's state_dict (load with .load_state_dict(weights))
+
+        """
+        if(not os.path.exists(state_path)):
+            raise ValueError(f'Path {state_path} not found, can\'t load config from it')
+        
+        if(device is None):
+            state_dict = torch.load(state_path)
+        else :
+            state_dict = torch.load(state_path,map_location=device)
+
+        config = state_dict['model_config']
+        model_name = state_dict['model_name']
+        weights = state_dict['model_state']
+
+        return model_name,config,weights
+    
+    @staticmethod
+    def run_config_from_state(state_path: str,device: str=None):
+        """
+            Given the path to a trainer state, returns the run_config dictionary.
+
+            Args :
+            state_path : path of the saved trainer state
+            device : device on which to load. Default one if None specified
+
+            returns: dict, the run_config dictionary
+        """
+        if(not os.path.exists(state_path)):
+            raise ValueError(f'Path {state_path} not found, can\'t load config from it')
+        
+        if(device is None):
+            state_dict = torch.load(state_path)
+        else :
+            state_dict = torch.load(state_path,map_location=device)
+
+        return state_dict['run_config']
 
     def process_batch(self,batch_data,**kwargs):
         """
@@ -478,8 +534,7 @@ class Trainer(DevModule):
     def train_steps(self,steps : int,batch_size:int,*,save_every:int=50,
                     backup_every: int=None, valid_every:int=1000,step_log:int=None,
                     num_workers:int=0,aggregate:int=1,
-                    batch_tqdm:bool=True,
-                    **kwargs):
+                    batch_tqdm:bool=True, train_init_params:dict=None):
         """
             Trains for specified number of steps(batches). This method trains the model in a basic way,
             and does very basic logging. At the minimum, it requires process_batch and 
@@ -499,9 +554,8 @@ class Trainer(DevModule):
             logging can be done every step_log steps.
             num_workers : number of workers in dataloader
             aggregate : how many batches to aggregate (effective batch_size is aggreg*batch_size)
-            load_from : path to a trainer state_dict. Loads the state
-                of the trainer from file, then continues training the specified
-                number of epochs.
+            batch_tqdm : whether to use tqdm for the batch loop or not
+            train_init_params : Parameter dictionary passed as argument to train_init
         """
     
         # Initiate logging
@@ -514,7 +568,7 @@ class Trainer(DevModule):
         # For all plots, we plot against the batches by default, since we do step training
         self.logger.define_metric("*", step_metric='batches')
 
-
+        self.train_init(**train_init_params)
         
         train_loader,valid_loader = self.get_loaders(batch_size,num_workers=num_workers)
         validate = valid_loader is not None
@@ -549,7 +603,7 @@ class Trainer(DevModule):
 
                 self.scheduler.step()
                 # Validation if applicable
-                if(validate and self.stepnum%valid_every==0):
+                if(validate and self.stepnum%valid_every==valid_every-1):
                     self._validate(valid_loader,batch_tqdm)
                     self.valid_log()
                     self._update_x_axis(epoch_mode=False)
