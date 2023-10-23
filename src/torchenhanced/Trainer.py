@@ -129,6 +129,7 @@ class Trainer(DevModule):
         self.run_id = state_dict['run_id']
         self.steps_done = state_dict.get('steps_done',0)
         self.epochs = state_dict.get('epochs',0)
+        self.run_config = state_dict.get('run_config',{'model':self.model.__class__.__name__})
         # Maybe I need to load also the run_name, we'll see
 
         print('LOAD OF SUCCESSFUL !')
@@ -166,7 +167,8 @@ class Trainer(DevModule):
         state = dict(
         optim_state=self.optim.state_dict(),scheduler_state=self.scheduler.state_dict(),model_state=self.model.state_dict(),
         model_name=self.model.class_name,optim_name=self.optim.__class__.__name__,scheduler_name=self.scheduler.__class__.__name__,
-        model_config=model_config,session=self.session_hash,run_id=self.run_id, steps_done=self.steps_done,epochs=self.epochs
+        model_config=model_config,session=self.session_hash,run_id=self.run_id, steps_done=self.steps_done,epochs=self.epochs,
+        run_config=self.run_config
         )
 
         name = self.run_name
@@ -177,7 +179,7 @@ class Trainer(DevModule):
         saveloc = os.path.join(self.state_save_loc,name)
         torch.save(state,saveloc)
 
-        print('Saved training state')
+        print(f'Saved training state at {datetime.now().strftime("%H-%M_%d_%m")}')
 
 
     @staticmethod
