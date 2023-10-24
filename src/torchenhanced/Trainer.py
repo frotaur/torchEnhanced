@@ -173,7 +173,8 @@ class Trainer(DevModule):
 
         name = self.run_name
         if (epoch is not None):
-            name=name+'_'+f'{epoch}'
+            os.makedirs(os.path.join(self.state_save_loc,'backups'),exist_ok=True)
+            name=os.path.join('backups',name+'_'+f'{epoch:.2f}')
 
         name = name + '.state'
         saveloc = os.path.join(self.state_save_loc,name)
