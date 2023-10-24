@@ -258,6 +258,8 @@ class Trainer(DevModule):
             state_dict : torch.state_dict, the model's state_dict (load with .load_state_dict(weights))
 
         """
+        print('WARNING : Deprecated, will be removed in next version')
+        print('For model config, use model_config_from_state instead')
         if(not os.path.exists(state_path)):
             raise ValueError(f'Path {state_path} not found, can\'t load config from it')
         
@@ -272,6 +274,57 @@ class Trainer(DevModule):
 
         return model_name,config,weights
 
+    @staticmethod
+    def model_config_from_state(state_path: str,device: str=None):
+        """
+            Given the path to a trainer state, returns a tuple (config, weights)
+            for the saved model. The model can then be initialized by using config 
+            as its __init__ arguments, and load the state_dict from weights.
+
+            Args :
+            state_path : path of the saved trainer state
+            device : device on which to load. Default one if None specified
+
+            returns: 3-uple
+            model_name : str, the saved model class name
+            config : dict, the saved model config (instanciate with element_name(**config))
+            state_dict : torch.state_dict, the model's state_dict (load with .load_state_dict(weights))
+
+        """
+        if(not os.path.exists(state_path)):
+            raise ValueError(f'Path {state_path} not found, can\'t load config from it')
+        
+        if(device is None):
+            state_dict = torch.load(state_path)
+        else :
+            state_dict = torch.load(state_path,map_location=device)
+
+        config = state_dict['model_config']
+        model_name = state_dict['name']
+        weights = state_dict['model_state']
+
+        return model_name,config,weights
+    
+    @staticmethod
+    def run_config_from_state(state_path: str,device: str=None):
+        """
+            Given the path to a trainer state, returns the run_config dictionary.
+
+            Args :
+            state_path : path of the saved trainer state
+            device : device on which to load. Default one if None specified
+
+            returns: dict, the run_config dictionary
+        """
+        if(not os.path.exists(state_path)):
+            raise ValueError(f'Path {state_path} not found, can\'t load config from it')
+        
+        if(device is None):
+            state_dict = torch.load(state_path)
+        else :
+            state_dict = torch.load(state_path,map_location=device)
+
+        return state_dict['run_config']
 
     def process_batch(self,batch_data,**kwargs):
         """
