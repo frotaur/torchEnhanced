@@ -269,7 +269,7 @@ class Trainer(DevModule):
             state_dict = torch.load(state_path,map_location=device)
 
         config = state_dict['model_config']
-        model_name = state_dict['name']
+        model_name = state_dict['model_name']
         weights = state_dict['model_state']
 
         return model_name,config,weights
@@ -300,7 +300,7 @@ class Trainer(DevModule):
             state_dict = torch.load(state_path,map_location=device)
 
         config = state_dict['model_config']
-        model_name = state_dict['name']
+        model_name = state_dict['model_name']
         weights = state_dict['model_state']
 
         return model_name,config,weights
