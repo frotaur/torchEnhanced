@@ -607,7 +607,7 @@ class Trainer(DevModule):
                 
 
                 # Validation if applicable
-                if(validate and self.stepnum%valid_every==0):
+                if(validate and self.stepnum%valid_every==valid_every-1):
                     self._validate(valid_loader,batch_tqdm)
                     self.valid_log()
                     self._update_x_axis(epoch_mode=False)
