@@ -312,7 +312,6 @@ class Trainer(DevModule):
         """
         raise NotImplementedError('process_batch_valid should be implemented in Trainer sub-class')
 
-
     def get_loaders(self,batch_size, num_workers=0):
         """
             Builds the dataloader needed for training and validation.
@@ -358,11 +357,21 @@ class Trainer(DevModule):
                     - self.epoch : current epoch
         """
         pass
+    
+    def train_init(self,**kwargs):
+        """
+            Can be redefined for doing stuff just at the beginning of the training,
+            for example, freezing weights, preparing some extra variables, or anything really.
+            Not mandatory, it is called at the very beginnig of train_epochs/train_steps. The
+            dictionary 'train_init_params' is passed as parameter. As such, it can take
+            any combination of parameters.
+        """
+        pass
 
     def train_epochs(self,epochs : int,batch_size:int,*,batch_sched:bool=False,save_every:int=50,
                      backup_every: int=None,step_log:int=None,
-                     num_workers:int=0,aggregate:int=1, load_from:str=None,
-                     batch_tqdm:bool=True,**kwargs):
+                     num_workers:int=0,aggregate:int=1,
+                     batch_tqdm:bool=True,train_init_params:dict=None):
         """
             Trains for specified epoch number. This method trains the model in a basic way,
             and does very basic logging. At the minimum, it requires process_batch and 
@@ -384,16 +393,9 @@ class Trainer(DevModule):
             load_from : path to a trainer state_dict. Loads the state
                 of the trainer from file, then continues training the specified
                 number of epochs.
+            train_init_params : Parameter dictionary passed as argument to train_init
         """
-
-        # Maybe remove this option ? Probably better just to load manually
-        if(os.path.isfile(str(load_from))):
-            # Loads the trainer state
-            self.load_state(load_from)
-        elif(load_from is not None) :
-            print(f'Specified "load_from" directory {load_from} non-existent; \
-                  continuing with model from scratch.')
-    
+        
         # Initiate logging
         self.logger = wandb.init(name=self.run_name,project=self.project_name,config=self.run_config,
                    id = self.run_id,resume='allow',dir=self.data_fold)
@@ -404,7 +406,7 @@ class Trainer(DevModule):
         # For all plots, we plot against the epoch by default
         self.logger.define_metric("*", step_metric='epochs')
 
-
+        self.train_init(**train_init_params)
         
         train_loader,valid_loader = self.get_loaders(batch_size,num_workers=num_workers)
         validate = valid_loader is not None
@@ -530,8 +532,6 @@ class Trainer(DevModule):
         self.stepnum = 0 # This is the current instance number of steps, using for when to log save etc
 
         while not steps_completed:
-            n_aggreg=0
-            
             self.totbatch = len(train_loader)
 
             # Iterate with or without tqdm
@@ -548,8 +548,6 @@ class Trainer(DevModule):
                 _, step_loss, n_aggreg = self._step_batch(batch_data,False,[],step_loss,n_aggreg, aggregate)
 
                 self.scheduler.step()
-                
-
                 # Validation if applicable
                 if(validate and self.stepnum%valid_every==0):
                     self._validate(valid_loader,batch_tqdm)
