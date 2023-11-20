@@ -7,7 +7,11 @@ def showTens(tensor, columns=None) :
     '''
         shows tensor as an image. Accepts both (C,H,W) and (B,C,H,W).
     '''
-    if(len(tensor.shape)==3) :
+    if(len(tensor.shape)==2):
+        fig = plt.figure()
+        plt.imshow(tensor[None,:,:])
+        plt.show()
+    elif(len(tensor.shape)==3) :
         fig = plt.figure()
         plt.imshow(tensor.permute((1,2,0)))
         plt.show()
@@ -35,12 +39,16 @@ def showTens(tensor, columns=None) :
         print("WARNING : assuming extra dimension are all batch dimensions, newshape : ",tensor.shape)
         showTens(tensor,columns)
     else :
-        raise Exception(f"Tensor shape should be (C,H,W) or (B,C,H,W), but got : {tensor.shape} !")
+        raise Exception(f"Tensor shape should be (H,W), (C,H,W) or (*,C,H,W), but got : {tensor.shape} !")
 
-def saveTens(tensor, folderpath,name="",columns=None):
+def saveTensImage(tensor, folderpath,name="imagetensor",columns=None):
     '''
         Saves tensor as an image. Accepts both (C,H,W) and (*,C,H,W). 
     '''
+    if(len(tensor.shape)==2) :
+        fig = plt.figure()
+        plt.imshow(tensor[None,:,:])
+        plt.savefig(os.path.join(folderpath,f"{name}.png"))
     if(len(tensor.shape)==3) :
         fig = plt.figure()
         plt.imshow(tensor.permute((1,2,0)))
@@ -68,6 +76,6 @@ def saveTens(tensor, folderpath,name="",columns=None):
     elif(len(tensor.shape)>4):
         tensor = tensor.reshape((-1,tensor.shape[-3],tensor.shape[-2],tensor.shape[-1])) # assume all batch dimensions
         print("WARNING : assuming extra dimension are all batch dimensions, newshape : ",tensor.shape)
-        saveTens(tensor,folderpath,name,columns)
+        saveTensImage(tensor,folderpath,name,columns)
     else :
-        raise Exception("Tensor shape should be (C,H,W) or (*,C,H,W) !")
+        raise Exception(f"Tensor shape should be (H,W), (C,H,W) or (*,C,H,W), but got : {tensor.shape} !")

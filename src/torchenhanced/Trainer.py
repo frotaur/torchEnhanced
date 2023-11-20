@@ -84,16 +84,21 @@ class Trainer(DevModule):
         self.project_name = project_name
         
         # Universal attributes for logging purposes
-        self.stepnum = 0
-        self.steps_done = 0
-        self.epochs = 0
-        self.batchnum = None
-        self.step_log = None
-        self.totbatch = None
-        self.do_batch_log = False
+        self.stepnum = 0 # number of steps in current training instance
+        self.batchnum = None # same as stepnum, DEPRECATED
+
+        self.batches = 0 # number of total batches ever
+        self.steps_done = 0 # number of total steps ever TODO (now its same as batches, will become optimizer steps later)
+        self.epochs = 0 # number of total epochs ever
+        self.samples = 0 # number of total samples ever
+
+        self.step_log = None # number of steps between each log
+        self.totbatch = None # total number of batches in one epoch for this training instance
+        self.do_batch_log = False 
 
         # Used for logging instead of wandb.log, useful if wandb not imported
         self.logger = None
+    
     def change_lr(self, new_lr):
         """
             Changes the learning rate of the optimizer.
@@ -128,7 +133,10 @@ class Trainer(DevModule):
         self.scheduler.load_state_dict(state_dict['scheduler_state'])
         self.run_id = state_dict['run_id']
         self.steps_done = state_dict.get('steps_done',0)
+        self.batches = state_dict.get('batches',0)
+
         self.epochs = state_dict.get('epochs',0)
+        self.samples = state_dict.get('samples',0)
         self.run_config = state_dict.get('run_config',{'model':self.model.__class__.__name__})
         # Maybe I need to load also the run_name, we'll see
 
@@ -147,7 +155,7 @@ class Trainer(DevModule):
                 - 'model_config' : json allowing one to reconstruct the model.
                 - 'run_id' : id of the run, for wandb
                 - 'steps_done' : only applicable in case of step training, number of steps done
-
+                - 'samples' : number of samples seen
             If you want a more complicated state, training_epoch should be overriden.
 
             Args :
@@ -168,7 +176,7 @@ class Trainer(DevModule):
         optim_state=self.optim.state_dict(),scheduler_state=self.scheduler.state_dict(),model_state=self.model.state_dict(),
         model_name=self.model.class_name,optim_name=self.optim.__class__.__name__,scheduler_name=self.scheduler.__class__.__name__,
         model_config=model_config,session=self.session_hash,run_id=self.run_id, steps_done=self.steps_done,epochs=self.epochs,
-        run_config=self.run_config
+        samples=self.samples, batches=self.batches,run_config=self.run_config
         )
 
         name = self.run_name
@@ -195,7 +203,7 @@ class Trainer(DevModule):
             save_dir : directory in which to save the model
             name : name of the model, if None, will be model_name_date.pt
         """
-        namu, config, weights = Trainer.config_from_state(state_path,device='cpu')
+        namu, config, weights = Trainer.model_config_from_state(state_path,device='cpu')
 
         if (name is None):
             name=f"{namu}_{datetime.now().strftime('%H-%M_%d_%m')}"
@@ -341,7 +349,7 @@ class Trainer(DevModule):
                 - self.do_batch_log : whether we should log this batch or not
                 - self.totbatch : total number of validation minibatches.
                 - self.epoch : current epoch
-
+                - self.samples : number of samples seen
             Returns : 2-uple, (loss, data_dict)
         """
         raise NotImplementedError('process_batch should be implemented in Trainer sub-class')
@@ -363,6 +371,7 @@ class Trainer(DevModule):
                     Minibatch logging in valid is not recommended, since it is not synchronized with the epoch x-axis.
                 - self.totbatch : total number of validation minibatches.
                 - self.epoch : current epoch
+                - self.samples : number of samples seen
 
             Returns : 2-uple, (loss, data_dict)
         """
@@ -394,6 +403,7 @@ class Trainer(DevModule):
                 - self.step_log : number of steps (minibatches) interval in which we should log 
                 - self.totbatch : total number of validation minibatches.
                 - self.epoch : current epoch
+                - self.samples : number of samples seen
         """
         pass
 
@@ -411,6 +421,9 @@ class Trainer(DevModule):
                     - self.step_log : number of steps (minibatches) interval in which we should log 
                     - self.totbatch : total number of validation minibatches.
                     - self.epoch : current epoch
+                    
+                    - self.samples : number of samples seen
+
         """
         pass
     
@@ -427,7 +440,7 @@ class Trainer(DevModule):
     def train_epochs(self,epochs : int,batch_size:int,*,batch_sched:bool=False,save_every:int=50,
                      backup_every: int=None,step_log:int=None,
                      num_workers:int=0,aggregate:int=1,
-                     batch_tqdm:bool=True,train_init_params:dict=None):
+                     batch_tqdm:bool=True,train_init_params:dict={}):
         """
             Trains for specified epoch number. This method trains the model in a basic way,
             and does very basic logging. At the minimum, it requires process_batch and 
@@ -459,6 +472,7 @@ class Trainer(DevModule):
         # Define the custom x axis metric, epochs
         self.logger.define_metric("batches",hidden=True)
         self.logger.define_metric("epochs",hidden=True)
+        self.logger.define_metric("ksamples",hidden=True)
         # For all plots, we plot against the epoch by default
         self.logger.define_metric("*", step_metric='epochs')
 
@@ -496,13 +510,14 @@ class Trainer(DevModule):
             for batchnum,batch_data in iter_on :
                 # Process the batch
                 self.batchnum=batchnum
-                epoch_loss, step_loss, n_aggreg = self._step_batch(batch_data,True,epoch_loss,step_loss,n_aggreg, aggregate)
+                epoch_loss, step_loss, n_aggreg = self._step_batch(batch_data,True,epoch_loss,step_loss,n_aggreg, aggregate, step_sched=False)
     
                 if(batch_sched):
                     self.scheduler.step(self.epochs)
 
                 self.stepnum+=1
                 self.steps_done+=1
+                self.samples+=batch_size
                 self.epochs+=1/self.totbatch
 
             self.epochs = round(self.epochs) # round to integer, should already be, but to remove floating point stuff
@@ -534,7 +549,7 @@ class Trainer(DevModule):
     def train_steps(self,steps : int,batch_size:int,*,save_every:int=50,
                     backup_every: int=None, valid_every:int=1000,step_log:int=None,
                     num_workers:int=0,aggregate:int=1,
-                    batch_tqdm:bool=True, train_init_params:dict=None):
+                    batch_tqdm:bool=True, train_init_params:dict={}):
         """
             Trains for specified number of steps(batches). This method trains the model in a basic way,
             and does very basic logging. At the minimum, it requires process_batch and 
@@ -551,7 +566,8 @@ class Trainer(DevModule):
             backup_every : saves trainer state without overwrite every 'backup_every' steps
             valid_every : validates the model every 'valid_every' steps
             step_log : If not none, used for logging every step_log steps. In process_batch,
-            logging can be done every step_log steps.
+            use self.do_step_log to know when to log. NOTE : if using aggregating, for step logging,
+            we consider a step to be aggregate batches, not 'true' batches.
             num_workers : number of workers in dataloader
             aggregate : how many batches to aggregate (effective batch_size is aggreg*batch_size)
             batch_tqdm : whether to use tqdm for the batch loop or not
@@ -599,9 +615,8 @@ class Trainer(DevModule):
             for batchnum,batch_data in iter_on :
                 # Process the batch according to the model.
                 self.batchnum=batchnum
-                _, step_loss, n_aggreg = self._step_batch(batch_data,False,[],step_loss,n_aggreg, aggregate)
+                _, step_loss, n_aggreg = self._step_batch(batch_data,False,[],step_loss,n_aggreg, aggregate,step_sched=True)
 
-                self.scheduler.step()
                 # Validation if applicable
                 if(validate and self.stepnum%valid_every==valid_every-1):
                     self._validate(valid_loader,batch_tqdm)
@@ -614,6 +629,7 @@ class Trainer(DevModule):
             
                 self.stepnum+=1
                 self.steps_done+=1
+                self.samples+=batch_size
                 self.epochs += 1/self.totbatch
 
                 if(self.stepnum>=steps):
@@ -632,6 +648,9 @@ class Trainer(DevModule):
             Args:   
             epoch_mode : bool, whether default x-axis is epoch or not
         """
+        # TODO remove the epoch_mode, and just use epochs as last one, it doesn't make a difference anyway
+        self.logger.log({'ksamples' : self.samples//1000},commit=False)
+
         if(epoch_mode):
             self.logger.log({'batches': self.steps_done},commit=False)
             self.logger.log({'epochs': self.epochs},commit=True)
@@ -639,12 +658,12 @@ class Trainer(DevModule):
             self.logger.log({'epochs': self.epochs},commit=False)
             self.logger.log({'batches': self.steps_done},commit=True)
 
-    def _step_batch(self,batch_data,epoch_mode,epoch_loss,step_loss,n_aggreg, aggregate):
+    def _step_batch(self, batch_data, epoch_mode, epoch_loss, step_loss, n_aggreg, aggregate, step_sched):
         """
             Internal function, makes one step of training given minibatch
         """
         n_aggreg+=1
-        self.do_batch_log = self.stepnum%self.step_log==0
+        self.do_batch_log = self.stepnum%(self.step_log*aggregate)==0 #if aggregating, one 'batch' is actually aggregate batches
 
         loss = self.process_batch(batch_data)
         
@@ -652,9 +671,7 @@ class Trainer(DevModule):
         step_loss.append(loss.item())
 
         loss=loss/aggregate # Rescale loss if aggregating.
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.)
-
+        loss.backward() # Accumulate gradients
         
         if(self.do_batch_log):
             self.logger.log({'loss/train_step':sum(step_loss)/len(step_loss)},commit=False)
@@ -664,8 +681,12 @@ class Trainer(DevModule):
 
         if(n_aggreg%aggregate==aggregate-1):
             n_aggreg=0
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.)
+
             self.optim.step()
             self.optim.zero_grad()
+            if(step_sched):
+                self.scheduler.step()
         
         return epoch_loss,step_loss,n_aggreg
 

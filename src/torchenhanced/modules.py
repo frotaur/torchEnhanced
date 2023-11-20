@@ -10,13 +10,12 @@ class DevModule(nn.Module):
         self.to(...) is called.
 
         args :
-        config : Dictionary that contains the key:value pairs needed to 
-        instantiate the model (essentially the arguments of the __init__ method).
+        device : optional, default 'cpu'. Device to initialize the module on.
     """
-    def __init__(self):
+    def __init__(self, device:str='cpu'):
         super().__init__()
 
-        self.register_buffer('_devtens',torch.empty(0))
+        self.register_buffer('_devtens',torch.empty(0, device=device))
 
     @property
     def device(self):
@@ -25,15 +24,6 @@ class DevModule(nn.Module):
     @property
     def paranum(self):
         return sum(p.numel() for p in self.parameters())
-    
-    @property
-    def config(self):
-        """
-            Returns a json-serializable dict containing the config of the model.
-            Essentially a key-value dictionary of the init arguments of the model.
-            Should be redefined in sub-classes.
-        """
-        return self._config
 
 
 class ConfigModule(DevModule):
@@ -46,8 +36,8 @@ class ConfigModule(DevModule):
         config : Dictionary that contains the key:value pairs needed to 
         instantiate the model (i.e. the argument values of the __init__ method)
     """
-    def __init__(self, config:dict):
-        super().__init__()
+    def __init__(self, config:dict, device:str='cpu'):
+        super().__init__(device=device)
 
         self._config = config
 
