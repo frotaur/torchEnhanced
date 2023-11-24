@@ -141,7 +141,7 @@ class Trainer(DevModule):
         # Maybe I need to load also the run_name, we'll see
 
         print('LOAD OF SUCCESSFUL !')
-
+        print('loaded dict : ', state_dict['batches'])
 
     def save_state(self,epoch:int = None):
         """
@@ -189,7 +189,7 @@ class Trainer(DevModule):
         torch.save(state,saveloc)
 
         print(f'Saved training state at {datetime.now().strftime("%H-%M_%d_%m")}')
-
+        print(f'At save : ', self.batches)
 
     @staticmethod
     def save_model_from_state(state_path:str,save_dir:str='.',name:str=None):
@@ -517,6 +517,7 @@ class Trainer(DevModule):
 
                 self.stepnum+=1
                 self.steps_done+=1
+                self.batches+=1
                 self.samples+=batch_size
                 self.epochs+=1/self.totbatch
 
@@ -548,7 +549,7 @@ class Trainer(DevModule):
 
     def train_steps(self,steps : int,batch_size:int,*,save_every:int=50,
                     backup_every: int=None, valid_every:int=1000,step_log:int=None,
-                    num_workers:int=0,aggregate:int=1,
+                    num_workers:int=0,aggregate:int=1,resume_batches:bool=False,
                     batch_tqdm:bool=True, train_init_params:dict={}):
         """
             Trains for specified number of steps(batches). This method trains the model in a basic way,
@@ -570,6 +571,8 @@ class Trainer(DevModule):
             we consider a step to be aggregate batches, not 'true' batches.
             num_workers : number of workers in dataloader
             aggregate : how many batches to aggregate (effective batch_size is aggreg*batch_size)
+            resume_batches : if True, will resume training assuming the first self.batches on the dataloader
+            are already done. Usually, use ONLY if dataloader does NOT shuffle.
             batch_tqdm : whether to use tqdm for the batch loop or not
             train_init_params : Parameter dictionary passed as argument to train_init
         """
@@ -589,6 +592,8 @@ class Trainer(DevModule):
         train_loader,valid_loader = self.get_loaders(batch_size,num_workers=num_workers)
         validate = valid_loader is not None
 
+        self.totbatch = len(train_loader) # Number of batches in one epoch
+
         self.model.train()
         # _=self.scheduler.last_epoch # this is equal to self.steps_done
     
@@ -602,13 +607,21 @@ class Trainer(DevModule):
         self.stepnum = 0 # This is the current instance number of steps, using for when to log save etc
 
         while not steps_completed:
-            self.totbatch = len(train_loader)
-
             # Iterate with or without tqdm
+
             if(batch_tqdm):
                 iter_on=tqdm(enumerate(train_loader),total=self.totbatch)
             else :
                 iter_on=enumerate(train_loader)
+
+            if(resume_batches):
+                resume_batches=False # Only resume for the first epoch, not if we reach and and restart.
+                print('Resuming from batch :', self.batches)
+                print(f'Fast forwarding {self.batches}%{self.totbatch}={self.batches%self.totbatch} batches')
+                for _ in tqdm(range((self.batches)%self.totbatch)):
+                    # skip batches already done
+                    next(iter_on)
+                # Now train_loader is synchronized with self.batches
 
             n_aggreg=0
             # Epoch of Training
@@ -624,14 +637,15 @@ class Trainer(DevModule):
                     self._update_x_axis(epoch_mode=False)
                     self.model.train()
 
+                self.stepnum+=1
+                self.steps_done+=1 # TO BE MODIFIED TO BE OPTIMIZER STEPS
+                self.batches+=1
+                self.samples+=batch_size
+                self.epochs +=1/self.totbatch
+
     	        # Save and backup
                 self._save_and_backup(self.stepnum,save_every,backup_every)
             
-                self.stepnum+=1
-                self.steps_done+=1
-                self.samples+=batch_size
-                self.epochs += 1/self.totbatch
-
                 if(self.stepnum>=steps):
                     steps_completed=True
                     break
@@ -649,10 +663,11 @@ class Trainer(DevModule):
             epoch_mode : bool, whether default x-axis is epoch or not
         """
         # TODO remove the epoch_mode, and just use epochs as last one, it doesn't make a difference anyway
+        # TODO make so that batches area actually batches, and steps_done are optimizer steps
         self.logger.log({'ksamples' : self.samples//1000},commit=False)
 
         if(epoch_mode):
-            self.logger.log({'batches': self.steps_done},commit=False)
+            self.logger.log({'batches': self.steps_done},commit=False) # TO BE MODIFIED TO BE OPTIMIZER STEPS
             self.logger.log({'epochs': self.epochs},commit=True)
         else :
             self.logger.log({'epochs': self.epochs},commit=False)

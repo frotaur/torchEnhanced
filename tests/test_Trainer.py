@@ -39,7 +39,7 @@ class LinearTrainer(Trainer):
     
     def get_loaders(self, batch_size, num_workers=0):
         self.loss_val = []
-        return DataLoader(self.dataset, batch_size=batch_size, shuffle=True), DataLoader(self.dataset, batch_size=batch_size, shuffle=True)
+        return DataLoader(self.dataset, batch_size=batch_size, shuffle=False), DataLoader(self.dataset, batch_size=batch_size, shuffle=True)
     
     def process_batch(self, batch_data,**kwargs):
         x, y = batch_data
@@ -77,24 +77,51 @@ class LinearTrainer(Trainer):
 
 # FOR MANUAL TESTING, COULDN'T FIGURE OUT HOW TO AUTOMATE IT
 #EPOCHS :
-trainer = LinearTrainer(run_name='test_epochs', project_name='test_torchenhanced', 
-                        state_save_loc=os.path.join(curfold),reach_plateau=200, run_config={'manamajeff':True})
-trainer.change_lr(1e-4)
-if(os.path.exists(os.path.join(curfold,'test_torchenhanced','state','test_epochs.state'))):
-    trainer.load_state(os.path.join(curfold,'test_torchenhanced','state','test_epochs.state'))
-time.sleep(2)
+# trainer = LinearTrainer(run_name='test_epochs', project_name='test_torchenhanced', 
+#                         state_save_loc=os.path.join(curfold),reach_plateau=200, run_config={'manamajeff':True})
+# trainer.change_lr(1e-4)
+# if(os.path.exists(os.path.join(curfold,'test_torchenhanced','state','test_epochs.state'))):
+#     trainer.load_state(os.path.join(curfold,'test_torchenhanced','state','test_epochs.state'))
+# time.sleep(2)
 
-trainer.train_epochs(epochs=100, batch_size=10, step_log=30, save_every=60,aggregate=2,batch_sched=True)
+# trainer.train_epochs(epochs=100, batch_size=10, step_log=30, save_every=60,aggregate=2,batch_sched=True)
 
-#STEPS :
-trainer = LinearTrainer(run_name='test_steps', project_name='test_torchenhanced', state_save_loc=os.path.join(curfold),reach_plateau=1500)
+# #STEPS :
+# trainer = LinearTrainer(run_name='test_steps', project_name='test_torchenhanced', state_save_loc=os.path.join(curfold),reach_plateau=1500)
 
-trainer.change_lr(1e-4)
-if(os.path.exists(os.path.join(curfold,'test_torchenhanced','state','test_steps.state'))):
-    trainer.load_state(os.path.join(curfold,'test_torchenhanced','state','test_steps.state'))
+# trainer.change_lr(1e-4)
+# if(os.path.exists(os.path.join(curfold,'test_torchenhanced','state','test_steps.state'))):
+#     trainer.load_state(os.path.join(curfold,'test_torchenhanced','state','test_steps.state'))
 
-time.sleep(2)
-trainer.train_steps(steps=1000, batch_size=10, step_log=30, save_every=60,aggregate=2, valid_every=100)
+# time.sleep(2)
+# trainer.train_steps(steps=1000, batch_size=10, step_log=30, save_every=60,aggregate=2, valid_every=100)
+
+
+def test_resume_train():
+    trainer = LinearTrainer(run_name='test_resume_train', project_name='test_torchenhanced', state_save_loc=os.path.join(curfold),reach_plateau=1500)
+    trainer.change_lr(1e-4)
+    trainer.train_steps(steps=1000, batch_size=200, step_log=30, save_every=60,aggregate=2, valid_every=100)
+    trainer.save_state()
+    print(f'Finished at batches : {trainer.batches}, epochs : {trainer.epochs}, steps : {trainer.steps_done}')
+    
+    # Test with resuming
+    trainer2 = LinearTrainer(run_name='test_with_resume', project_name='test_torchenhanced', state_save_loc=os.path.join(curfold),reach_plateau=1500)
+    trainer2.change_lr(1e-4)
+    trainer2.load_state(os.path.join(curfold,'test_torchenhanced','state','test_resume_train.state')) # Load the state
+    trainer2.train_steps(steps=200, batch_size=10, step_log=30, save_every=3000,aggregate=2, valid_every=100, resume_batches=True)
+
+    # Test without resuming
+    trainer3 = LinearTrainer(run_name='test_without_resume', project_name='test_torchenhanced', state_save_loc=os.path.join(curfold),reach_plateau=1500)
+    trainer3.change_lr(1e-4)
+    trainer3.load_state(os.path.join(curfold,'test_torchenhanced','state','test_resume_train.state')) # Load the state
+    trainer3.train_steps(steps=200, batch_size=10, step_log=30, save_every=3000,aggregate=2, valid_every=100)
+
+    assert trainer2.batches == trainer3.batches, f"Batch mismatch : {trainer2.batches} vs {trainer.batches}"
+    assert trainer2.epochs == trainer3.epochs, f"Epoch mismatch : {trainer2.epochs} vs {trainer.epochs}"
+    assert trainer2.steps_done == trainer3.steps_done, f"Step mismatch : {trainer2.steps_done} vs {trainer.steps_done}"
+
+    # Look on wandb to see if they are the same
+
 
 def test_Save_Weights():
     lintra = LinearTrainer(run_name='test_save_weights', project_name='AnewDawn', state_save_loc=os.path.join(curfold))
@@ -110,5 +137,6 @@ def test_Trainer_config():
     ma = LinSimple(hidden=32,out=15)
     config = ma.config
     assert config == {'hidden':32, 'out':15, 'name':'LinSimple'}, f"Invalid config : {config}"
+
 
 # Probably need to add more unit_tests...
