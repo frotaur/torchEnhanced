@@ -658,6 +658,7 @@ class Trainer(DevModule):
             
                 if(self.stepnum>=steps):
                     steps_completed=True
+                    self._save_and_backup(1,save_every,backup_every)
                     break
             
             
