@@ -549,7 +549,7 @@ class Trainer(DevModule):
 
     def train_steps(self,steps : int,batch_size:int,*,save_every:int=50,
                     backup_every: int=None, valid_every:int=1000,step_log:int=None,
-                    num_workers:int=0,aggregate:int=1,resume_batches:bool=False,
+                    num_workers:int=0,aggregate:int=1,pickup:bool=True,resume_batches:bool=False,
                     batch_tqdm:bool=True, train_init_params:dict={}):
         """
             Trains for specified number of steps(batches). This method trains the model in a basic way,
@@ -571,6 +571,9 @@ class Trainer(DevModule):
             we consider a step to be aggregate batches, not 'true' batches.
             num_workers : number of workers in dataloader
             aggregate : how many batches to aggregate (effective batch_size is aggreg*batch_size)
+            pickup : if False, will train for exactly 'steps' steps. If True, will restart at the previous
+            number of steps, and train until total number of steps is 'steps'. Basically, if true, picks up
+            where it left off.
             resume_batches : if True, will resume training assuming the first self.batches on the dataloader
             are already done. Usually, use ONLY if dataloader does NOT shuffle.
             batch_tqdm : whether to use tqdm for the batch loop or not
@@ -604,15 +607,17 @@ class Trainer(DevModule):
         step_loss=[]
 
         steps_completed = False
-        self.stepnum = 0 # This is the current instance number of steps, using for when to log save etc
+        if(pickup):
+            self.stepnum = self.batches
+        else:
+            self.stepnum = 0 #Current instance stepnumber, used for when to log and stop training.
 
         while not steps_completed:
             iter_on=enumerate(train_loader)
 
             if(resume_batches):
                 resume_batches=False # Only resume for the first epoch, not if we reach and and restart.
-                print('Resuming from batch :', self.batches)
-                tofastforward = self.batches%self.totbatch
+                tofastforward = (self.batches)%self.totbatch
                 print(f'Fast forwarding {self.batches}%{self.totbatch}={tofastforward} batches')
                 for _ in tqdm(range(tofastforward)):
                     # skip batches already done
@@ -631,11 +636,12 @@ class Trainer(DevModule):
                 _, step_loss, n_aggreg = self._step_batch(batch_data,False,[],step_loss,n_aggreg, aggregate,step_sched=True)
 
                 # Validation if applicable
-                if(validate and self.stepnum%valid_every==valid_every-1):
+                if(validate and self.batches%valid_every==valid_every-1):
                     self._validate(valid_loader,batch_tqdm)
                     self.valid_log()
                     self._update_x_axis(epoch_mode=False)
                     self.model.train()
+
 
                 self.stepnum+=1
                 self.steps_done+=1 # TO BE MODIFIED TO BE OPTIMIZER STEPS
@@ -643,8 +649,12 @@ class Trainer(DevModule):
                 self.samples+=batch_size
                 self.epochs +=1/self.totbatch
 
-    	        # Save and backup
-                self._save_and_backup(self.stepnum,save_every,backup_every)
+                # TODO minor bug, when we resume we shift by one minibatch the saving schedule
+                # Comes because the first save location is at %valid_every-1, so it last one less step since we start stepnum at 0
+    	        # Save and backup on the basis of BATCHES, not steps. That way when we resume, everything is consistent
+                self._save_and_backup(self.batches,save_every,backup_every)
+
+
             
                 if(self.stepnum>=steps):
                     steps_completed=True
@@ -732,9 +742,11 @@ class Trainer(DevModule):
         self.logger.log({'loss/valid':sum(val_loss)/len(val_loss)},commit=False)
     
     def _save_and_backup(self,curstep,save_every,backup_every):
-        if curstep%save_every==save_every-1 :
+        # We use curstep-1, to save at a moment consistent with the valid
+        # And valid looks at curstep-1. (we updated curstep in between)
+        if (curstep-1)%save_every==0 :
             self.save_state()
         
         if backup_every is not None:
-            if curstep%backup_every==backup_every-1 :
+            if (curstep-1)%backup_every==0 :
                 self.save_state(epoch=self.epochs)
