@@ -607,22 +607,22 @@ class Trainer(DevModule):
         self.stepnum = 0 # This is the current instance number of steps, using for when to log save etc
 
         while not steps_completed:
-            # Iterate with or without tqdm
-
-            if(batch_tqdm):
-                iter_on=tqdm(enumerate(train_loader),total=self.totbatch)
-            else :
-                iter_on=enumerate(train_loader)
+            iter_on=enumerate(train_loader)
 
             if(resume_batches):
                 resume_batches=False # Only resume for the first epoch, not if we reach and and restart.
                 print('Resuming from batch :', self.batches)
-                print(f'Fast forwarding {self.batches}%{self.totbatch}={self.batches%self.totbatch} batches')
-                for _ in tqdm(range((self.batches)%self.totbatch)):
+                tofastforward = self.batches%self.totbatch
+                print(f'Fast forwarding {self.batches}%{self.totbatch}={tofastforward} batches')
+                for _ in tqdm(range(tofastforward)):
                     # skip batches already done
                     next(iter_on)
-                # Now train_loader is synchronized with self.batches
-
+                if(batch_tqdm):
+                    iter_on=tqdm(iter_on,total=self.totbatch-tofastforward)
+            else :
+                if(batch_tqdm):
+                    iter_on=tqdm(iter_on,total=self.totbatch)
+    
             n_aggreg=0
             # Epoch of Training
             for batchnum,batch_data in iter_on :
