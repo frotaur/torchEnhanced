@@ -546,7 +546,6 @@ class Trainer(DevModule):
 
         self.logger.finish()
 
-
     def train_steps(self,steps : int,batch_size:int,*,save_every:int=50,
                     backup_every: int=None, valid_every:int=1000,step_log:int=None,
                     num_workers:int=0,aggregate:int=1,pickup:bool=True,resume_batches:bool=False,
@@ -749,5 +748,5 @@ class Trainer(DevModule):
             self.save_state()
         
         if backup_every is not None:
-            if (curstep-1)%backup_every==0 :
+            if (curstep-1)%backup_every==backup_every-1 :
                 self.save_state(epoch=self.epochs)
