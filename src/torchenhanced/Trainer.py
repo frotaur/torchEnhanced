@@ -32,20 +32,25 @@ class Trainer(DevModule):
         state_save_loc : str or None(default), folder in which to store data 
         pertaining to training, such as the training state, wandb folder and model weights.
         device : torch.device, device on which to train the model
+        parallel : None or list[int,str], if None, no parallelization, if list, list of devices (int or torch.device) to parallelize on
         run_name : str, for wandb and saves, name of the training session
         project_name : str, name of the project in which the run belongs
         run_config : dict, dictionary of hyperparameters (any). Will be viewable in wandb.
     """
 
     def __init__(self, model : nn.Module, optim :Optimizer =None, scheduler : lrsched._LRScheduler =None,*, 
-                 state_save_loc=None,device:str ='cpu', run_name :str = None,project_name :str = None,
+                 state_save_loc=None,device:str ='cpu',parallel:list[int]=None, run_name :str = None,project_name :str = None,
                  run_config : dict = {}):
         super().__init__()
         
+        self.parallel_train = parallel is not None
+        self.parallel_devices = parallel
+        if(self.parallel_train):
+            # Go to GPU if parallel training
+            device = self.parallel_devices[0]
         self.to(device)
         self.model = model.to(device)
 
-        
         if(state_save_loc is None) :
             self.data_fold = os.path.join('.',project_name)
             self.state_save_loc = os.path.join(self.data_fold,"state")
@@ -76,10 +81,10 @@ class Trainer(DevModule):
         else :
             self.run_name=run_name
             run_name = os.path.join('.','runs',run_name)
-        
+ 
         self.run_config = dict(model=self.model.__class__.__name__,
-                               **run_config)
-        
+                            **run_config)
+
         self.run_id = wandb.util.generate_id() # For restoring the run
         self.project_name = project_name
         
@@ -104,25 +109,31 @@ class Trainer(DevModule):
             Changes the learning rate of the optimizer.
             Might clash with scheduler ?
         """
-
         for g in self.optim.param_groups:
             g['lr'] = new_lr
         
 
     def load_state(self,state_path : str, strict: bool=True):
         """
-            Loads trainer minimal trainer state (model,session_hash,optim,scheduler).
+            Loads Trainer state, for restoring a run.
 
             params : 
-            state_path : str, location of the sought-out state_dict
-
+            state_path : location of the sought-out state_dict
+            strict: whether to load the state_dict in strict mode or not
         """
+
+        if(isinstance(self.model, nn.DataParallel)):
+            # Unwrap the model, since we saved the state_dict of the model, not the DataParallel
+            self.model = self.model.module.to(self.device)
+        
         if(not os.path.exists(state_path)):
             raise ValueError(f'Path {state_path} not found, can\'t load state')
+
         state_dict = torch.load(state_path,map_location=self.device)
         if(self.model.config != state_dict['model_config']):
             print('WARNING ! Loaded model configuration and state model_config\
                   do not match. This may generate errors.')
+            
         assert self.model.class_name == state_dict['model_name'], f'Loaded model {state_dict["model_name"]} mismatch with current: {self.model.class_name}!'
         assert self.optim.__class__.__name__ == state_dict['optim_name'], f'Loaded optimizer : {state_dict["optim_name"]} mismatch with current: {self.optim.__class__.__name__} !'
         assert self.scheduler.__class__.__name__ == state_dict['scheduler_name'], f'Loaded scheduler : {state_dict["scheduler_name"]} mismatch with current: {self.optim.__class__.__name__} !'
@@ -140,8 +151,8 @@ class Trainer(DevModule):
         self.run_config = state_dict.get('run_config',{'model':self.model.__class__.__name__})
         # Maybe I need to load also the run_name, we'll see
 
-        print('LOAD OF SUCCESSFUL !')
-        print('loaded dict : ', state_dict['batches'])
+        print('Training state load successful !')
+        print(f'Loaded state had {state_dict["epochs"]} epochs trained.')
 
     def save_state(self,epoch:int = None):
         """
@@ -162,19 +173,19 @@ class Trainer(DevModule):
             epoch : int, if not None, will append the epoch number to the state name.
         """
         os.makedirs(self.state_save_loc,exist_ok=True)
-
+        
+        # Avoid saving the DataParallel
+        saving_model = self.model.module if self.parallel_train else self.model
+    
         # Create the state
         try :
-            model_config = self.model.config
+            model_config = saving_model.config
         except AttributeError as e:
-            print(f'''Error while fetching model config ! 
-                    Make sure model.config is defined. (see ConfigModule doc).
-                    Continuing, but might generate errors while loading/save models)''')
-            model_config = None
+            raise AttributeError(f"Error while fetching model config ! Make sure model.config is defined. (see ConfigModule doc).")
 
         state = dict(
-        optim_state=self.optim.state_dict(),scheduler_state=self.scheduler.state_dict(),model_state=self.model.state_dict(),
-        model_name=self.model.class_name,optim_name=self.optim.__class__.__name__,scheduler_name=self.scheduler.__class__.__name__,
+        optim_state=self.optim.state_dict(),scheduler_state=self.scheduler.state_dict(),model_state=saving_model.state_dict(),
+        model_name=saving_model.class_name,optim_name=self.optim.__class__.__name__,scheduler_name=self.scheduler.__class__.__name__,
         model_config=model_config,session=self.session_hash,run_id=self.run_id, steps_done=self.steps_done,epochs=self.epochs,
         samples=self.samples, batches=self.batches,run_config=self.run_config
         )
@@ -189,7 +200,8 @@ class Trainer(DevModule):
         torch.save(state,saveloc)
 
         print(f'Saved training state at {datetime.now().strftime("%H-%M_%d_%m")}')
-        print(f'At save : ', self.batches)
+        print(f'At save, {self.epochs} epochs are done.')
+
 
     @staticmethod
     def save_model_from_state(state_path:str,save_dir:str='.',name:str=None):
@@ -337,12 +349,15 @@ class Trainer(DevModule):
     def process_batch(self,batch_data,**kwargs):
         """
             Redefine this in sub-classes. Should return the loss, as well as 
-            the data_dict (potentially updated). Can do logging and other things 
+            the data_dict (potentially updated). Batch_data will be on 'cpu' most of the
+            time, except if you dataset sets a specific device. Can do logging and other things 
             optionally. Loss is automatically logged, so no need to worry about it. 
+            Use self.model to access the model.
 
             Args :
             batch_data : whatever is returned by the dataloader
             Default class attributes, automatically maintained by the trainer, are :
+                - self.device : current model device
                 - self.batchnum : current validation mini-batch number
                 - self.step_log : number of steps (minibatches) interval in 
                         which we should log. (PREFER USING do_batch_log instead)
@@ -357,15 +372,17 @@ class Trainer(DevModule):
     def process_batch_valid(self,batch_data, **kwargs):
         """
             Redefine this in sub-classes. Should return the loss, as well as 
-            the data_dict (potentially updated). There should be NO logging done
-            inside this function, only in valid_log. Proper use should be to collect the data
-            to be logged in a class attribute, and then log it in valid_log (to log once per epoch)
-            Loss is automatically logged, so no need to worry about it. 
+            the data_dict (potentially updated). Use self.model to access the model (it is already in eval mode).
+            Batch_data will be on 'cpu' most of the time, except if you dataset sets a specific device. 
+            There should be NO logging done inside this function, only in valid_log.
+            Proper use should be to collect the data to be logged in a class attribute,
+            and then log it in valid_log (to log once per epoch). Loss is automatically 
+            logged, so no need to worry about it. 
 
             Args :
             batch_data : whatever is returned by the dataloader
-            data_dict : DEPRECATED ! Avoid using it. Use class attributes instead. 
             Default class attributes, automatically maintained by the trainer, are :
+                - self.device : current model device
                 - self.batchnum : current validation mini-batch number
                 - self.step_log : number of steps (minibatches) interval in which we should log 
                     Minibatch logging in valid is not recommended, since it is not synchronized with the epoch x-axis.
@@ -482,6 +499,10 @@ class Trainer(DevModule):
         validate = valid_loader is not None
 
         self.model.train()
+        if(self.parallel_train):
+            print('Parallel training on devices : ',self.parallel_devices)
+            self.model = nn.DataParallel(self.model,device_ids=self.parallel_devices)
+        
         if(batch_sched):
             assert self.epochs-self.scheduler.last_epoch<1e-5, f'Epoch mismatch {self.epochs} vs {self.scheduler.last_epoch}'
         else:
@@ -597,10 +618,12 @@ class Trainer(DevModule):
         self.totbatch = len(train_loader) # Number of batches in one epoch
 
         self.model.train()
-        # _=self.scheduler.last_epoch # this is equal to self.steps_done
-    
 
-        print('Number of batches/epoch : ',len(train_loader))
+        if(self.parallel_train):
+            print('Parallel training on devices : ',self.parallel_devices)
+            self.model = nn.DataParallel(self.model,device_ids=self.parallel_devices)
+        
+        print('Number of batches/epoch : ',len(train_loader)/1000 ,'k')
 
         self.step_log = step_log
         step_loss=[]

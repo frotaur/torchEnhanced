@@ -27,13 +27,13 @@ class LinSimple(ConfigModule):
         return self.layer(x)
     
 class LinearTrainer(Trainer):
-    def __init__(self, run_name: str = None, project_name: str = None, state_save_loc=None,reach_plateau=100,run_config={}):
+    def __init__(self, run_name: str = None, project_name: str = None, state_save_loc=None,reach_plateau=100,run_config={},parallel=None,device='cpu'):
         model = LinSimple()
         opti = torch.optim.Adam(model.parameters(),lr=1e-3)
         schedo = lrsched.LinearLR(opti,start_factor=0.01,end_factor=1,total_iters=reach_plateau)
 
         super().__init__(model,optim=opti,scheduler=schedo, run_name=run_name, 
-                         project_name=project_name,state_save_loc=state_save_loc,run_config=run_config)
+                         project_name=project_name,state_save_loc=state_save_loc,run_config=run_config,parallel=parallel,device=device)
 
         self.dataset =Subset(MNIST(os.path.join(curfold,'data'),download=True,transform=t.ToTensor()),range(100))
     
@@ -43,6 +43,9 @@ class LinearTrainer(Trainer):
     
     def process_batch(self, batch_data,**kwargs):
         x, y = batch_data
+        x = x.to(self.device)
+        y = y.to(self.device)
+
         x = x.reshape((x.shape[0],-1))
         
         pred = self.model(x) # (B,10)
@@ -61,6 +64,8 @@ class LinearTrainer(Trainer):
     
     def process_batch_valid(self, batch_data):
         x, y = batch_data
+        x = x.to(self.device)
+        y = y.to(self.device)
         x = x.reshape((x.shape[0],-1))
         
         pred = self.model(x) # (B,10)
@@ -76,25 +81,25 @@ class LinearTrainer(Trainer):
         
 
 # FOR MANUAL TESTING, COULDN'T FIGURE OUT HOW TO AUTOMATE IT
-#EPOCHS :
-# trainer = LinearTrainer(run_name='test_epochs', project_name='test_torchenhanced', 
-#                         state_save_loc=os.path.join(curfold),reach_plateau=200, run_config={'manamajeff':True})
-# trainer.change_lr(1e-4)
-# if(os.path.exists(os.path.join(curfold,'test_torchenhanced','state','test_epochs.state'))):
-#     trainer.load_state(os.path.join(curfold,'test_torchenhanced','state','test_epochs.state'))
-# time.sleep(2)
+# EPOCHS :
+trainer = LinearTrainer(run_name='test_epochs', project_name='test_torchenhanced', 
+                        state_save_loc=os.path.join(curfold),reach_plateau=200, run_config={'manamajeff':True},parallel=[0],device='cpu')
+trainer.change_lr(1e-4)
+if(os.path.exists(os.path.join(curfold,'test_torchenhanced','state','test_epochs.state'))):
+    trainer.load_state(os.path.join(curfold,'test_torchenhanced','state','test_epochs.state'))
+time.sleep(2)
 
-# trainer.train_epochs(epochs=100, batch_size=10, step_log=30, save_every=60,aggregate=2,batch_sched=True)
+trainer.train_epochs(epochs=100, batch_size=10, step_log=30, save_every=60,aggregate=2,batch_sched=True)
 
-# #STEPS :
-# trainer = LinearTrainer(run_name='test_steps', project_name='test_torchenhanced', state_save_loc=os.path.join(curfold),reach_plateau=1500)
+#STEPS :
+trainer = LinearTrainer(run_name='test_steps', project_name='test_torchenhanced', state_save_loc=os.path.join(curfold),reach_plateau=1500,parallel=[0],device='cpu')
 
-# trainer.change_lr(1e-4)
-# if(os.path.exists(os.path.join(curfold,'test_torchenhanced','state','test_steps.state'))):
-#     trainer.load_state(os.path.join(curfold,'test_torchenhanced','state','test_steps.state'))
+trainer.change_lr(1e-4)
+if(os.path.exists(os.path.join(curfold,'test_torchenhanced','state','test_steps.state'))):
+    trainer.load_state(os.path.join(curfold,'test_torchenhanced','state','test_steps.state'))
 
-# time.sleep(2)
-# trainer.train_steps(steps=1000, batch_size=10, step_log=30, save_every=60,aggregate=2, valid_every=100)
+time.sleep(2)
+trainer.train_steps(steps=1000, batch_size=10, step_log=30, save_every=60,aggregate=2, valid_every=100)
 
 
 def test_resume_train():
