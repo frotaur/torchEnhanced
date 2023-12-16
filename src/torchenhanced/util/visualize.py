@@ -5,7 +5,7 @@ from torchvision.utils import make_grid
 
 def showTens(tensor, columns=None) :
     '''
-        shows tensor as an image. Accepts both (C,H,W) and (B,C,H,W).
+        shows tensor as an image. Accepts (H,W), (C,H,W) and (*,C,H,W).
     '''
     if(len(tensor.shape)==2):
         fig = plt.figure()
