@@ -751,7 +751,7 @@ class Trainer(DevModule):
             step_loss=[]
             self.do_batch_log=False
 
-        if(n_aggreg%aggregate==aggregate-1):
+        if(n_aggreg%aggregate==0):
             n_aggreg=0
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.)
 
