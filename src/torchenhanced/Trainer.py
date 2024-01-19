@@ -616,8 +616,9 @@ class Trainer(DevModule):
             num_workers : number of workers in dataloader
             aggregate : how many batches to aggregate (effective batch_size is aggreg*batch_size)
             pickup : if False, will train for exactly 'steps' steps. If True, will restart at the previous
-            number of steps, and train until total number of steps is 'steps'. Basically, if true, picks up
-            where it left off.
+            number of steps, and train until total number of steps is 'steps'. Useful for resuming training,
+            if you want to train for a certain specific number of steps. In both cases, the training resumes
+            where it left off, only difference is how many MORE steps it will do.
             resume_batches : if True, will resume training assuming the first self.batches on the dataloader
             are already done. Usually, use ONLY if dataloader does NOT shuffle.
             batch_tqdm : whether to use tqdm for the batch loop or not
@@ -724,7 +725,7 @@ class Trainer(DevModule):
         self.logger.log({'ksamples' : self.samples//1000},commit=False)
 
         if(epoch_mode):
-            self.logger.log({'batches': self.steps_done},commit=False) # TO BE MODIFIED TO BE OPTIMIZER STEPS
+            self.logger.log({'batches': self.steps_done},commit=False)
             self.logger.log({'epochs': self.epochs},commit=True)
         else :
             self.logger.log({'epochs': self.epochs},commit=False)
