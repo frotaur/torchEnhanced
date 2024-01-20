@@ -65,7 +65,7 @@ def saveTensVideo(tensor,folderpath,name="videotensor",columns=None,fps=30,out_s
         if(tensor.shape[1]==1):
             print('Assuming gray-scale video')
             tensor=tensor.expand(-1,3,-1,-1) # (T,3,H,W)
-        assert tensor.shape[2]==3, f"Tensor shape should be (T,H,W), (T,3,H,W) or (*,T,3,H,W), but got : {tensor.shape} !"
+        assert tensor.shape[1]==3, f"Tensor shape should be (T,H,W), (T,3,H,W) or (*,T,3,H,W), but got : {tensor.shape} !"
         # A single video
         _make_save_video(tensor,folderpath,name,fps)
     elif(len(tensor.shape)==5):
