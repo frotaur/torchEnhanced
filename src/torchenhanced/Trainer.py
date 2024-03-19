@@ -154,7 +154,7 @@ class Trainer(DevModule):
         print('Training state load successful !')
         print(f'Loaded state had {state_dict["epochs"]} epochs trained.')
 
-    def load_model_from_state(self,state_path : str, strict: bool=True):
+    def load_model_from_state(self,state_path : str, strict: bool=True, force_config_match:bool=False):
         """
             Loads only model weights from state. Useful if you just want to load a 
             pretrained model to train it on a different dataset.
@@ -168,8 +168,12 @@ class Trainer(DevModule):
 
         state_dict = torch.load(state_path,map_location=self.device)
         if(self.model.config != state_dict['model_config']):
-            print('WARNING ! Loaded model configuration and state model_config\
-                  do not match. This may generate errors.')
+            if(force_config_match):
+                raise ValueError(f'Loaded model configuration and state model_config\
+                                 do not match. \n Model : {self.model.config} \n State : {state_dict["model_config"]}')
+            else:
+                print('WARNING ! Loaded model configuration and state model_config\
+                    do not match. This may generate errors.')
             
         assert self.model.class_name == state_dict['model_name'], f'Loaded model {state_dict["model_name"]} mismatch with current: {self.model.class_name}!'
 
