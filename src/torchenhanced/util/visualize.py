@@ -11,10 +11,12 @@ def showTens(tensor, columns=None) :
     if(len(tensor.shape)==2):
         fig = plt.figure()
         plt.imshow(tensor[None,:,:])
+        plt.axis('off')
         plt.show()
     elif(len(tensor.shape)==3) :
         fig = plt.figure()
         plt.imshow(tensor.permute((1,2,0)))
+        plt.axis('off')
         plt.show()
     elif(len(tensor.shape)==4) :
         # Assume B,C,H,W
@@ -165,10 +167,12 @@ def saveTensImage(tensor, folderpath,name="imagetensor",columns=None):
     if(len(tensor.shape)==2) :
         fig = plt.figure()
         plt.imshow(tensor[None,:,:])
+        plt.axis('off')
         plt.savefig(os.path.join(folderpath,f"{name}.png"))
     if(len(tensor.shape)==3) :
         fig = plt.figure()
         plt.imshow(tensor.permute((1,2,0)))
+        plt.axis('off')
         plt.savefig(os.path.join(folderpath,f"{name}.png"))
     elif(len(tensor.shape)==4) :
         # Assume B,C,H,W
