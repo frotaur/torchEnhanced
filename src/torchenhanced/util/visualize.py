@@ -168,12 +168,12 @@ def saveTensImage(tensor, folderpath,name="imagetensor",columns=None):
         fig = plt.figure()
         plt.imshow(tensor[None,:,:])
         plt.axis('off')
-        plt.savefig(os.path.join(folderpath,f"{name}.png"))
+        plt.savefig(os.path.join(folderpath,f"{name}.png"),bbox_inches='tight')
     if(len(tensor.shape)==3) :
         fig = plt.figure()
         plt.imshow(tensor.permute((1,2,0)))
         plt.axis('off')
-        plt.savefig(os.path.join(folderpath,f"{name}.png"))
+        plt.savefig(os.path.join(folderpath,f"{name}.png"),bbox_inches='tight')
     elif(len(tensor.shape)==4) :
         # Assume B,C,H,W
         B=tensor.shape[0]
@@ -193,7 +193,7 @@ def saveTensImage(tensor, folderpath,name="imagetensor",columns=None):
             plt.colorbar()
         #createGrid(tensor,fig,numCol)
         plt.axis('off')
-        plt.savefig(os.path.join(folderpath,f"{name}.png"))
+        plt.savefig(os.path.join(folderpath,f"{name}.png"),bbox_inches='tight')
     elif(len(tensor.shape)>4):
         tensor = tensor.reshape((-1,tensor.shape[-3],tensor.shape[-2],tensor.shape[-1])) # assume all batch dimensions
         print("WARNING : assuming extra dimension are all batch dimensions, newshape : ",tensor.shape)
