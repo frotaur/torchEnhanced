@@ -2,7 +2,7 @@ import torch,sys,pathlib
 sys.path.append(pathlib.Path(__file__).parent.parent.as_posix())
 
 from src.torchenhanced.util import *
-
+from src.torchenhanced.util.misc import coord_to_flat
 
 def test_coord_to_flat_batch():
     unfolded = torch.randint(0,100,(3,4,5,6)) #4-dim coord tensor

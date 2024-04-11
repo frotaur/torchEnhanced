@@ -1,6 +1,6 @@
 import torch,sys,pathlib
 sys.path.append(pathlib.Path(__file__).parent.parent.as_posix())
-from torchenhanced import CosineWarmup
+from src.torchenhanced.ml.optim import CosineWarmup
 import matplotlib.pyplot as plt
 
 def test_cosine():

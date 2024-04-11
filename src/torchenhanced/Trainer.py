@@ -4,10 +4,9 @@ import torch.optim.lr_scheduler as lrsched
 from torch.optim import Optimizer
 from datetime import datetime
 from tqdm import tqdm
-from .modules import DevModule, ConfigModule
 
 
-class Trainer(DevModule):
+class Trainer:
     """
         Mother class used to train models, exposing a host of useful functions.
         Should be subclassed to be used, and the following methods should be redefined :
@@ -29,7 +28,7 @@ class Trainer(DevModule):
         scheduler : Scheduler to be used. Can be provided only if using
         non-default optimizer. Must be initialized with aforementioned 
         optimizer. Default : warmup for 4 epochs from 1e-6.
-        state_save_loc : str or None(default), folder in which to store data 
+        save_loc : str or None(default), folder in which to store data 
         pertaining to training, such as the training state, wandb folder and model weights.
         device : torch.device, device on which to train the model
         parallel : None or list[int,str], if None, no parallelization, if list, list of devices (int or torch.device) to parallelize on
@@ -39,7 +38,7 @@ class Trainer(DevModule):
     """
 
     def __init__(self, model : nn.Module, optim :Optimizer =None, scheduler : lrsched._LRScheduler =None,*, 
-                 state_save_loc=None,device:str ='cpu',parallel:list[int]=None, run_name :str = None,project_name :str = None,
+                 save_loc=None,device:str ='cpu',parallel:list[int]=None, run_name :str = None,project_name :str = None,
                  run_config : dict = {}):
         super().__init__()
         
@@ -48,18 +47,16 @@ class Trainer(DevModule):
         if(self.parallel_train):
             # Go to GPU if parallel training
             device = self.parallel_devices[0]
-        self.to(device)
+
         self.model = model.to(device)
 
-        if(state_save_loc is None) :
+        if(save_loc is None) :
             self.data_fold = os.path.join('.',project_name)
-            self.state_save_loc = os.path.join(self.data_fold,"state")
-            self.model_save_loc = os.path.join(self.data_fold,"weights")
+            self.save_loc = os.path.join(self.data_fold,"state")
         else :
-            self.data_fold = os.path.join(state_save_loc,project_name)#
-            
-            self.state_save_loc = os.path.join(state_save_loc,project_name,"state")
-            self.model_save_loc = os.path.join(state_save_loc,project_name,"weights")
+            self.data_fold = os.path.join(save_loc,project_name)#
+            self.save_loc = os.path.join(save_loc,project_name,"state")
+
         
         os.makedirs(self.data_fold,exist_ok=True)
         if(optim is None):
@@ -88,22 +85,23 @@ class Trainer(DevModule):
         self.run_id = wandb.util.generate_id() # For restoring the run
         self.project_name = project_name
         
+        self.device=device
         # Universal attributes for logging purposes
-        self.stepnum = 0 # number of steps in current training instance
-        self.batchnum = None # same as stepnum, DEPRECATED
+        self.stepnum = 0 # number of steps in current training instance (+1 each optimizer step)
+        self.batchnum = 0 # (+1 each batch. Equal to stepnum if no aggregation)
 
-        self.batches = 0 # number of total batches ever
-        self.steps_done = 0 # number of total steps ever TODO (now its same as batches, will become optimizer steps later)
+        self.batches = 0 # number of total batches ever (+1 each batch. Same a steps_done if no aggregation)
+        self.steps_done = 0 # number of total steps ever (+1 each optimizer step)
         self.epochs = 0 # number of total epochs ever
         self.samples = 0 # number of total samples ever
 
         self.step_log = None # number of steps between each log
         self.totbatch = None # total number of batches in one epoch for this training instance
-        self.do_batch_log = False 
+        self.do_step_log = False 
 
         # Used for logging instead of wandb.log, useful if wandb not imported
         self.logger = None
-    
+
     def change_lr(self, new_lr):
         """
             Changes the learning rate of the optimizer.
@@ -150,6 +148,9 @@ class Trainer(DevModule):
         self.samples = state_dict.get('samples',0)
         self.run_config = state_dict.get('run_config',{'model':self.model.__class__.__name__})
         # Maybe I need to load also the run_name, we'll see
+        
+        # Reset the default step_loss, although shouldn't load stuff after a bit of training.
+        self.step_loss = []
 
         print('Training state load successful !')
         print(f'Loaded state had {state_dict["epochs"]} epochs trained.')
@@ -200,7 +201,7 @@ class Trainer(DevModule):
             Args :
             epoch : int, if not None, will append the epoch number to the state name.
         """
-        os.makedirs(self.state_save_loc,exist_ok=True)
+        os.makedirs(self.save_loc,exist_ok=True)
         
         # Avoid saving the DataParallel
         saving_model = self.model.module if self.parallel_train else self.model
@@ -220,11 +221,11 @@ class Trainer(DevModule):
 
         name = self.run_name
         if (epoch is not None):
-            os.makedirs(os.path.join(self.state_save_loc,'backups'),exist_ok=True)
+            os.makedirs(os.path.join(self.save_loc,'backups'),exist_ok=True)
             name=os.path.join('backups',name+'_'+f'{epoch:.2f}')
 
         name = name + '.state'
-        saveloc = os.path.join(self.state_save_loc,name)
+        saveloc = os.path.join(self.save_loc,name)
         torch.save(state,saveloc)
 
         print(f'Saved training state at {datetime.now().strftime("%H-%M_%d_%m")}')
@@ -290,48 +291,15 @@ class Trainer(DevModule):
         return (opti_name,opti_state),(sched_name,sched_state)
 
     @staticmethod
-    def config_from_state(state_path: str,device: str=None):
-        """
-            Given the path to a trainer state, returns a tuple (config, weights)
-            for the saved model. The model can then be initialized by using config 
-            as its __init__ arguments, and load the state_dict from weights.
-
-            Args :
-            state_path : path of the saved trainer state
-            device : device on which to load. Default one if None specified
-
-            returns: 3-uple
-            model_name : str, the saved model class name
-            config : dict, the saved model config (instanciate with element_name(**config))
-            state_dict : torch.state_dict, the model's state_dict (load with .load_state_dict(weights))
-
-        """
-        print('WARNING : Deprecated, will be removed in next version')
-        print('For model config, use model_config_from_state instead')
-        if(not os.path.exists(state_path)):
-            raise ValueError(f'Path {state_path} not found, can\'t load config from it')
-        
-        if(device is None):
-            state_dict = torch.load(state_path)
-        else :
-            state_dict = torch.load(state_path,map_location=device)
-
-        config = state_dict['model_config']
-        model_name = state_dict['model_name']
-        weights = state_dict['model_state']
-
-        return model_name,config,weights
-
-    @staticmethod
     def model_config_from_state(state_path: str,device: str=None):
         """
-            Given the path to a trainer state, returns a tuple (config, weights)
+            Given the path to a trainer state, returns a 3-uple (model_name,config, weights)
             for the saved model. The model can then be initialized by using config 
             as its __init__ arguments, and load the state_dict from weights.
 
             Args :
             state_path : path of the saved trainer state
-            device : device on which to load. Default one if None specified
+            device : device on which to load. Previous one if None specified
 
             returns: 3-uple
             model_name : str, the saved model class name
@@ -374,10 +342,9 @@ class Trainer(DevModule):
 
         return state_dict['run_config']
 
-    def process_batch(self,batch_data,**kwargs):
+    def process_batch(self,batch_data):
         """
-            Redefine this in sub-classes. Should return the loss, as well as 
-            the data_dict (potentially updated). Batch_data will be on 'cpu' most of the
+            Redefine this in sub-classes. Should return the loss. Batch_data will be on 'cpu' most of the
             time, except if you dataset sets a specific device. Can do logging and other things 
             optionally. Loss is automatically logged, so no need to worry about it. 
             Use self.model to access the model.
@@ -386,18 +353,17 @@ class Trainer(DevModule):
             batch_data : whatever is returned by the dataloader
             Default class attributes, automatically maintained by the trainer, are :
                 - self.device : current model device
-                - self.batchnum : current validation mini-batch number
-                - self.step_log : number of steps (minibatches) interval in 
-                        which we should log. (PREFER USING do_batch_log instead)
-                - self.do_batch_log : whether we should log this batch or not
-                - self.totbatch : total number of validation minibatches.
-                - self.epoch : current epoch
+                - self.stepnum : current step number since last training/epoch start
+                - self.do_step_log : whether we should log this batch or not
+                - self.totbatch : total number of minibatches in one epoch.
+                - self.epochs: current epoch
                 - self.samples : number of samples seen
+                - self.steps_done : number of steps done since the beginning of training
             Returns : 2-uple, (loss, data_dict)
         """
         raise NotImplementedError('process_batch should be implemented in Trainer sub-class')
 
-    def process_batch_valid(self,batch_data, **kwargs):
+    def process_batch_valid(self,batch_data):
         """
             Redefine this in sub-classes. Should return the loss, as well as 
             the data_dict (potentially updated). Use self.model to access the model (it is already in eval mode).
@@ -412,10 +378,8 @@ class Trainer(DevModule):
             Default class attributes, automatically maintained by the trainer, are :
                 - self.device : current model device
                 - self.batchnum : current validation mini-batch number
-                - self.step_log : number of steps (minibatches) interval in which we should log 
-                    Minibatch logging in valid is not recommended, since it is not synchronized with the epoch x-axis.
                 - self.totbatch : total number of validation minibatches.
-                - self.epoch : current epoch
+                - self.epochs: current epoch
                 - self.samples : number of samples seen
 
             Returns : 2-uple, (loss, data_dict)
@@ -442,13 +406,14 @@ class Trainer(DevModule):
             because of sync issues with the epoch x-axis.
 
             Args :
-            data_dict : DEPRECATED ! Avoid using it. Use class attributes instead. 
             Default class attributes, automatically maintained by the trainer, are :
-                - self.batchnum : current validation mini-batch number
-                - self.step_log : number of steps (minibatches) interval in which we should log 
-                - self.totbatch : total number of validation minibatches.
-                - self.epoch : current epoch
+                - self.device : current model device
+                - self.stepnum : current step number since last training/epoch start
+                - self.do_step_log : whether we should log this batch or not
+                - self.totbatch : total number of minibatches in one epoch.
+                - self.epochs: current epoch
                 - self.samples : number of samples seen
+                - self.steps_done : number of steps done since the beginning of training
         """
         pass
 
@@ -460,15 +425,12 @@ class Trainer(DevModule):
 
 
             Args :
-            data_dict : DEPRECATED ! Avoid using it. Use class attributes instead. 
-                Default class attributes, automatically maintained by the trainer, are :
-                    - self.batchnum : current validation mini-batch number
-                    - self.step_log : number of steps (minibatches) interval in which we should log 
-                    - self.totbatch : total number of validation minibatches.
-                    - self.epoch : current epoch
-                    
-                    - self.samples : number of samples seen
-
+            Default class attributes, automatically maintained by the trainer, are :
+                - self.batchnum : current validation mini-batch number
+                - self.totbatch : total number of validation minibatches.
+                - self.epochs: current epoch
+                - self.samples : number of samples seen
+                - self.steps_done : number of steps done since the beginning of training
         """
         pass
     
@@ -477,7 +439,7 @@ class Trainer(DevModule):
             Can be redefined for doing stuff just at the beginning of the training,
             for example, freezing weights, preparing some extra variables, or anything really.
             Not mandatory, it is called at the very beginnig of train_epochs/train_steps. The
-            dictionary 'train_init_params' is passed as parameter. As such, it can take
+            dictionary 'train_init_params' is passed as parameter list. As such, it can take
             any combination of parameters.
         """
         pass
@@ -497,27 +459,19 @@ class Trainer(DevModule):
             epochs : number of epochs to train for
             batch_size : batch size
             batch_sched : if True, scheduler steps (by a lower amount) between each batch.
-            Not that this use is deprecated, so it is recommended to keep False. For now, 
+            Note that this use is deprecated, so it is recommended to keep False. For now, 
             necessary for some Pytorch schedulers (cosine annealing).
-            save_every : saves trainer state every 'save_every' epochs
-            step_log : If not none, will also log every step_log minibatches, in addition to each epoch
-            batch_log : same as step_log, DEPRECATED
+            save_every : saves trainer state every 'save_every' EPOCHS
+            backup_every : saves trainer state without overwrite every 'backup_every' EPOCHS
+            step_log : If not none, will also log every step_log optim steps, in addition to each epoch
             num_workers : number of workers in dataloader
             aggregate : how many batches to aggregate (effective batch_size is aggreg*batch_size)
-            load_from : path to a trainer state_dict. Loads the state
-                of the trainer from file, then continues training the specified
-                number of epochs.
+            batch_tqdm : if True, will use tqdm for the batch loop, if False, will not use tqdm
             train_init_params : Parameter dictionary passed as argument to train_init
         """
         
         # Initiate logging
-        self.logger = wandb.init(name=self.run_name,project=self.project_name,config=self.run_config,
-                   id = self.run_id,resume='allow',dir=self.data_fold)
-        
-        # Define the custom x axis metric, epochs
-        self.logger.define_metric("batches",hidden=True)
-        self.logger.define_metric("epochs",hidden=True)
-        self.logger.define_metric("ksamples",hidden=True)
+        self._init_logger()
         # For all plots, we plot against the epoch by default
         self.logger.define_metric("*", step_metric='epochs')
 
@@ -525,7 +479,10 @@ class Trainer(DevModule):
         
         train_loader,valid_loader = self.get_loaders(batch_size,num_workers=num_workers)
         validate = valid_loader is not None
-
+        
+        self.totbatch = len(train_loader)
+        assert self.totbatch > aggregate, f'Aggregate ({aggregate}) should be smaller than number of batches \
+                                            in one epoch ({self.totbatch}), otherwise we never step !'
         self.model.train()
         if(self.parallel_train):
             print('Parallel training on devices : ',self.parallel_devices)
@@ -535,19 +492,19 @@ class Trainer(DevModule):
             assert self.epochs-self.scheduler.last_epoch<1e-5, f'Epoch mismatch {self.epochs} vs {self.scheduler.last_epoch}'
         else:
             assert int(self.epochs)==self.scheduler.last_epoch, f'Epoch mismatch {self.epochs} vs {self.scheduler.last_epoch}'
+        
         #Floor frac epochs, since we start at start of epoch, and also for the scheduler :
         self.epochs = int(self.epochs)
         print('Number of batches/epoch : ',len(train_loader))
         self.stepnum = 0 # This is the current instance number of steps, using for when to log save etc
 
         self.step_log = step_log
-        step_loss=[]
-
+        self.step_loss=[]
+        
         
         for ep_incr in tqdm(range(epochs)):
-            epoch_loss,n_aggreg=[[],0]
-            
-            self.totbatch = len(train_loader)
+            self.epoch_loss=[]
+            n_aggreg = 0
 
             # Iterate with or without tqdm
             if(batch_tqdm):
@@ -559,36 +516,36 @@ class Trainer(DevModule):
             for batchnum,batch_data in iter_on :
                 # Process the batch
                 self.batchnum=batchnum
-                epoch_loss, step_loss, n_aggreg = self._step_batch(batch_data,True,epoch_loss,step_loss,n_aggreg, aggregate, step_sched=False)
-    
+                n_aggreg = self._step_batch(batch_data,n_aggreg, aggregate, step_sched=False)
+
+
                 if(batch_sched):
                     self.scheduler.step(self.epochs)
 
-                self.stepnum+=1
-                self.steps_done+=1
-                self.batches+=1
                 self.samples+=batch_size
                 self.epochs+=1/self.totbatch
+                # NOTE: Not great, but batches and steps update in _step_batch by necessity
 
             self.epochs = round(self.epochs) # round to integer, should already be, but to remove floating point stuff
             
             if(not batch_sched):
                 self.scheduler.step()
             else :
+                # Is useless in principle, just to synchronize with the rounding of epochs
                 self.scheduler.step(self.epochs)
             
             # Epoch of validation
             if(validate):
-                self._validate(valid_loader,batch_tqdm)
-                self.model.train()
+                self._validate(valid_loader)
                 self.valid_log()
+                self.model.train()
     
 
-            # Log training at epoch level
-            self.logger.log({'loss/train_epoch':sum(epoch_loss)/len(epoch_loss)},commit=False)
+            # Log training loss at epoch level
+            self.logger.log({'loss/train_epoch':sum(self.epoch_loss)/len(self.epoch_loss)},commit=False)
             self.epoch_log()
                 
-            self._update_x_axis(epoch_mode=True)
+            self._update_x_axis()
             
             # Save and backup when applicable
             self._save_and_backup(curstep=ep_incr,save_every=save_every,backup_every=backup_every)
@@ -597,8 +554,8 @@ class Trainer(DevModule):
 
     def train_steps(self,steps : int,batch_size:int,*,save_every:int=50,
                     backup_every: int=None, valid_every:int=1000,step_log:int=None,
-                    num_workers:int=0,aggregate:int=1,pickup:bool=True,resume_batches:bool=False,
-                    batch_tqdm:bool=True, train_init_params:dict={}):
+                    num_workers:int=0,aggregate:int=1,pickup:bool=True,resume_batches:bool=False, 
+                    train_init_params:dict={}):
         """
             Trains for specified number of steps(batches). This method trains the model in a basic way,
             and does very basic logging. At the minimum, it requires process_batch and 
@@ -614,9 +571,8 @@ class Trainer(DevModule):
             save_every : saves trainer state every 'save_every' epochs
             backup_every : saves trainer state without overwrite every 'backup_every' steps
             valid_every : validates the model every 'valid_every' steps
-            step_log : If not none, used for logging every step_log steps. In process_batch,
-            use self.do_step_log to know when to log. NOTE : if using aggregating, for step logging,
-            we consider a step to be aggregate batches, not 'true' batches.
+            step_log : If not none, used for logging every step_log optim steps. In process_batch,
+            use self.do_step_log to know when to log. 
             num_workers : number of workers in dataloader
             aggregate : how many batches to aggregate (effective batch_size is aggreg*batch_size)
             pickup : if False, will train for exactly 'steps' steps. If True, will restart at the previous
@@ -625,19 +581,13 @@ class Trainer(DevModule):
             where it left off, only difference is how many MORE steps it will do.
             resume_batches : if True, will resume training assuming the first self.batches on the dataloader
             are already done. Usually, use ONLY if dataloader does NOT shuffle.
-            batch_tqdm : whether to use tqdm for the batch loop or not
             train_init_params : Parameter dictionary passed as argument to train_init
         """
     
         # Initiate logging
-        self.logger = wandb.init(name=self.run_name,project=self.project_name,config=self.run_config,
-                   id = self.run_id,resume='allow',dir=self.data_fold)
-        
-        # Define the custom x axis metrics
-        self.logger.define_metric("epochs",hidden=True)
-        self.logger.define_metric("batches",hidden=True)
+        self._init_logger()
         # For all plots, we plot against the batches by default, since we do step training
-        self.logger.define_metric("*", step_metric='batches')
+        self.logger.define_metric("*", step_metric='steps')
 
         self.train_init(**train_init_params)
         
@@ -646,6 +596,8 @@ class Trainer(DevModule):
 
         self.totbatch = len(train_loader) # Number of batches in one epoch
 
+        assert self.totbatch >= aggregate, f'Aggregate ({aggregate}) should be smaller than number of batches \
+                                            in one epoch ({self.totbatch}), otherwise we never step !'
         self.model.train()
 
         if(self.parallel_train):
@@ -655,7 +607,8 @@ class Trainer(DevModule):
         print('Number of batches/epoch : ',len(train_loader)/1000 ,'k')
 
         self.step_log = step_log
-        step_loss=[]
+        self.step_loss=[]
+        self.epoch_loss = None
 
         steps_completed = False
         if(pickup):
@@ -673,50 +626,41 @@ class Trainer(DevModule):
                 for _ in tqdm(range(tofastforward)):
                     # skip batches already done
                     next(iter_on)
-                if(batch_tqdm):
-                    iter_on=tqdm(iter_on,total=self.totbatch-tofastforward)
+                iter_on=tqdm(iter_on,total=self.totbatch-tofastforward)
             else :
-                if(batch_tqdm):
-                    iter_on=tqdm(iter_on,total=self.totbatch)
+                iter_on=tqdm(iter_on,total=self.totbatch)
     
             n_aggreg=0
             # Epoch of Training
             for batchnum,batch_data in iter_on :
                 # Process the batch according to the model.
                 self.batchnum=batchnum
-                _, step_loss, n_aggreg = self._step_batch(batch_data,False,[],step_loss,n_aggreg, aggregate,step_sched=True)
+                n_aggreg = self._step_batch(batch_data,n_aggreg, aggregate,step_sched=True)
 
                 # Validation if applicable
                 if(validate and self.batches%valid_every==valid_every-1):
-                    self._validate(valid_loader,batch_tqdm)
+                    self._validate(valid_loader)
                     self.valid_log()
-                    self._update_x_axis(epoch_mode=False)
+                    self._update_x_axis()
                     self.model.train()
 
 
-                self.stepnum+=1
-                self.steps_done+=1 # TO BE MODIFIED TO BE OPTIMIZER STEPS
-                self.batches+=1
                 self.samples+=batch_size
-                self.epochs +=1/self.totbatch
+                self.epochs +=1/self.totbatch  # NOTE: Not great, but batches and steps update in _step_batch by necessity
+
 
                 # TODO minor bug, when we resume we shift by one minibatch the saving schedule
                 # Comes because the first save location is at %valid_every-1, so it last one less step since we start stepnum at 0
-    	        # Save and backup on the basis of BATCHES, not steps. That way when we resume, everything is consistent
-                self._save_and_backup(self.batches,save_every,backup_every)
+                self._save_and_backup(self.steps_done,save_every,backup_every)
 
-
-            
                 if(self.stepnum>=steps):
                     steps_completed=True
                     self._save_and_backup(1,save_every,backup_every)
                     break
             
-            
-
         wandb.finish()
 
-    def _update_x_axis(self,epoch_mode):
+    def _update_x_axis(self):
         """
             Adds and commits pending wandb.log calls, and adds the x-axis metrics,
             to use the correct defaults.
@@ -724,37 +668,36 @@ class Trainer(DevModule):
             Args:   
             epoch_mode : bool, whether default x-axis is epoch or not
         """
-        # TODO remove the epoch_mode, and just use epochs as last one, it doesn't make a difference anyway
-        # TODO make so that batches area actually batches, and steps_done are optimizer steps
+
         self.logger.log({'ksamples' : self.samples//1000},commit=False)
+        self.logger.log({'epochs': self.epochs},commit=False)
+        self.logger.log({'steps': self.steps_done},commit=True)
 
-        if(epoch_mode):
-            self.logger.log({'batches': self.steps_done},commit=False)
-            self.logger.log({'epochs': self.epochs},commit=True)
-        else :
-            self.logger.log({'epochs': self.epochs},commit=False)
-            self.logger.log({'batches': self.steps_done},commit=True)
 
-    def _step_batch(self, batch_data, epoch_mode, epoch_loss, step_loss, n_aggreg, aggregate, step_sched):
+    def _step_batch(self, batch_data, n_aggreg, aggregate, step_sched):
         """
             Internal function, makes one step of training given minibatch
         """
-        n_aggreg+=1
-        self.do_batch_log = self.stepnum%(self.step_log*aggregate)==0 #if aggregating, one 'batch' is actually aggregate batches
-
+        # Compute loss, and custom batch logging
         loss = self.process_batch(batch_data)
         
-        epoch_loss.append(loss.item())
-        step_loss.append(loss.item())
-
+        # Update default logging (NOTE :maybe I shouldn't do this, to avoid synchronization of CUDA ?)
+        # TODO : benchmark with and without the loss.item() to see if it changes significantly
+        self.step_loss.append(loss.item())
+        if(self.epoch_loss is not None):
+            self.epoch_loss.append(loss.item())
+        
+        # Do default logging
+        if(self.do_step_log):
+            self.logger.log({'loss/train_step':sum(self.step_loss)/len(self.step_loss)},commit=False)
+            self._update_x_axis()
+            self.step_loss=[]
+    
         loss=loss/aggregate # Rescale loss if aggregating.
         loss.backward() # Accumulate gradients
         
-        if(self.do_batch_log):
-            self.logger.log({'loss/train_step':sum(step_loss)/len(step_loss)},commit=False)
-            self._update_x_axis(epoch_mode=epoch_mode)
-            step_loss=[]
-            self.do_batch_log=False
+        self.batches+=1
+        n_aggreg+=1
 
         if(n_aggreg%aggregate==0):
             n_aggreg=0
@@ -762,24 +705,28 @@ class Trainer(DevModule):
 
             self.optim.step()
             self.optim.zero_grad()
+
             if(step_sched):
                 self.scheduler.step()
-        
-        return epoch_loss,step_loss,n_aggreg
+
+            ## Update the step number
+            self.stepnum+=1
+            self.steps_done+=1
+
+        self.do_step_log = (self.stepnum%self.step_log)==0 if self.step_log else False
+
+        return n_aggreg
 
     @torch.no_grad()
-    def _validate(self,valid_loader, batch_tqdm)->None:
+    def _validate(self,valid_loader)->None:
         self.model.eval()
         val_loss=[]
         t_totbatch = self.totbatch
         t_batchnum = self.batchnum
 
         self.totbatch = len(valid_loader) # For now we use same totbatch for train and valid, might wanna change that in the future
-        if(batch_tqdm):
-            print('------ Validation ------')
-            iter_on=tqdm(enumerate(valid_loader),total=self.totbatch)
-        else:
-            iter_on=enumerate(valid_loader)
+        print('------ Validation ------')
+        iter_on=tqdm(enumerate(valid_loader),total=self.totbatch)
 
         for (v_batchnum,v_batch_data) in iter_on:
             self.batchnum=v_batchnum
@@ -789,10 +736,20 @@ class Trainer(DevModule):
         
         self.totbatch=t_totbatch
         self.batchnum=t_batchnum
-
+        
         # Log validation data
         self.logger.log({'loss/valid':sum(val_loss)/len(val_loss)},commit=False)
     
+    
+    def _init_logger(self):
+        """ Initiate the logger, and define the custom x axis metrics """
+        self.logger = wandb.init(name=self.run_name,project=self.project_name,config=self.run_config,
+                   id = self.run_id,resume='allow',dir=self.data_fold)
+        
+        self.logger.define_metric("epochs",hidden=True)
+        self.logger.define_metric("steps",hidden=True)
+        self.logger.define_metric("ksamples",hidden=True)
+
     def _save_and_backup(self,curstep,save_every,backup_every):
         # We use curstep-1, to save at a moment consistent with the valid
         # And valid looks at curstep-1. (we updated curstep in between)

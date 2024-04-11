@@ -1,4 +1,4 @@
 from . import util
-from .modules import *
-from .Trainer import Trainer
-from .CosineWarmup import CosineWarmup
+from .modules import DevModule, ConfigModule
+from .trainer import Trainer
+from .ml.optim.cosine_warmup import CosineWarmup # Backward compatibility

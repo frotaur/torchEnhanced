@@ -109,7 +109,7 @@ def saveTensVideo(tensor,folderpath,name="videotensor",columns=None,fps=30,out_s
         video_tens = tensor.reshape((-1,*tensor.shape[-4:]))
         saveTensVideo(video_tens,folderpath,name,columns,fps,out_size)
 
-
+@torch.no_grad()
 def gridify(tensor,out_size=800,columns=None):
     """
         Makes a grid of images/videos from a batch of images. Accepts (B,*,H,W), 
@@ -201,6 +201,7 @@ def saveTensImage(tensor, folderpath,name="imagetensor",columns=None):
     else :
         raise Exception(f"Tensor shape should be (H,W), (C,H,W) or (*,C,H,W), but got : {tensor.shape} !")
 
+@torch.no_grad()
 def _make_save_video(video_tens,folderpath,name,fps=30):
     """
         Makes a video in mp4 and saves it at the given folderpath, with given name.

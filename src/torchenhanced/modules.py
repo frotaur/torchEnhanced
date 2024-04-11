@@ -32,7 +32,7 @@ class ConfigModule(DevModule):
         stores the necessary data to reconstruct the model.
         Use preferably over DevModule, especially with use with Trainer.
 
-        args :
+        Args :
         config : Dictionary that contains the key:value pairs needed to 
         instantiate the model (i.e. the argument values of the __init__ method)
     """
@@ -42,7 +42,6 @@ class ConfigModule(DevModule):
         self._config = config
 
         self.class_name = self.__class__.__name__ # Use this instead if, at time of saving, you need the name.
-        # self._config['name'] = self.__class__.__name__ # Decided against using name in config, it defeats the purpose.
 
     @property
     def config(self):
@@ -53,3 +52,22 @@ class ConfigModule(DevModule):
         """
         return self._config
 
+    def load_weights(self, weights_loc:str, strict:bool=True):
+        """
+            Loads weights from a file into the model, mapping them to current device.
+
+            Args:
+            weights_loc :  Path to the file containing the weights.
+            strict : If True, loads only if the model has exactly the same keys as the weights.
+        """
+
+        self.load_state_dict(torch.load(weights_loc,map_location=self.device),strict=strict)
+    
+    def save_weights(self, weights_loc:str):
+        """
+            Saves the weights of the model to a file.
+
+            Args:
+            weights_loc :  Path to the file to save the weights to.
+        """
+        torch.save(self.state_dict(),weights_loc)

@@ -11,6 +11,7 @@ def save_string(string, file_name):
     except: return print(f"Error writing to {file_name=}")
 
 def load_json(file_name): return json.loads(load_string(file_name))
+
 def save_json(obj, file_name): save_string(json.dumps(obj), file_name)
 
 

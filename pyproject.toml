@@ -18,7 +18,7 @@ classifiers = [
     'Development Status :: 3 - Alpha'
 ]
 dynamic = ["version"]
-dependencies = ["torch","torchvision","matplotlib","tqdm", "wandb",]
+dependencies = ["torch","torchvision","matplotlib","tqdm", "wandb","opencv_python","numpy","Pillow","tqdm"]
 
 
 [project.urls]
