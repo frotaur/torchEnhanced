@@ -612,9 +612,9 @@ class Trainer:
 
         steps_completed = False
         if(pickup):
-            self.stepnum = self.batches
+            self.stepnum = self.steps_done # Pick up where we left off
         else:
-            self.stepnum = 0 #Current instance stepnumber, used for when to log and stop training.
+            self.stepnum = 0 # Stepnum used for logging, and when to stop. This means, we train for a further 'steps' steps.
 
         while not steps_completed:
             iter_on=enumerate(train_loader)
