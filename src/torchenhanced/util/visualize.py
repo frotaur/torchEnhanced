@@ -52,6 +52,57 @@ def showTens(tensor, columns=None) :
         raise Exception(f"Tensor shape should be (H,W), (C,H,W) or (*,C,H,W), but got : {tensor.shape} !")
 
 @torch.no_grad()
+def saveTens(tensor, folderpath,name="imagetensor",columns=None):
+    """
+        Saves tensor as a png image using pyplot.
+        Any extra dimensions (*,C,H,W) are treated as batch dimensions.
+
+        Args:
+        tensor : (H,W) or (C,H,W) or (*,C,H,W) tensor to display
+        folderpath : relative path of folder where to save the image
+        name : name of the image (do not include extension)
+        columns : number of columns to use for the grid of images (default 8 or less)
+    """
+    tensor = tensor.detach().cpu()
+
+    if(len(tensor.shape)==2) :
+        fig = plt.figure()
+        plt.imshow(tensor[None,:,:])
+        plt.axis('off')
+        plt.savefig(os.path.join(folderpath,f"{name}.png"),bbox_inches='tight')
+    if(len(tensor.shape)==3) :
+        fig = plt.figure()
+        plt.imshow(tensor.permute((1,2,0)))
+        plt.axis('off')
+        plt.savefig(os.path.join(folderpath,f"{name}.png"),bbox_inches='tight')
+    elif(len(tensor.shape)==4) :
+        # Assume B,C,H,W
+        B=tensor.shape[0]
+        if(columns is not None):
+            numCol=columns
+        else :
+            numCol=min(8,B)
+
+        fig = plt.figure()
+        
+        to_show=make_grid(tensor,nrow=numCol,pad_value=0. ,padding=2)
+        if(tensor.shape[1]==1):
+            to_show=to_show.mean(dim=0,keepdim=True)
+
+        plt.imshow(to_show.permute(1,2,0))
+        if(tensor.shape[1]==1):
+            plt.colorbar()
+
+        plt.axis('off')
+        plt.savefig(os.path.join(folderpath,f"{name}.png"),bbox_inches='tight')
+    elif(len(tensor.shape)>4):
+        tensor = tensor.reshape((-1,tensor.shape[-3],tensor.shape[-2],tensor.shape[-1])) # assume all batch dimensions
+        print("WARNING : assuming extra dimension are all batch dimensions, newshape : ",tensor.shape)
+        saveTens(tensor,folderpath,name,columns)
+    else :
+        raise Exception(f"Tensor shape should be (H,W), (C,H,W) or (*,C,H,W), but got : {tensor.shape} !")
+
+@torch.no_grad()
 def saveTensVideo(tensor,folderpath,name="videotensor",columns=None,fps=30,out_size=800):
     """
         Saves tensor as a video. Accepts both (T,H,W), (T,3,H,W) and (*,T,3,H,W).
@@ -167,57 +218,6 @@ def gridify(tensor,out_size=800,columns=None):
     tensor = tensor.reshape((*rest_dim,numRows*H,numCol*W)) # (*,numRows*H,numCol*W)
 
     return tensor
-
-@torch.no_grad()
-def saveTens(tensor, folderpath,name="imagetensor",columns=None):
-    """
-        Saves tensor as a png image using pyplot.
-        Any extra dimensions (*,C,H,W) are treated as batch dimensions.
-
-        Args:
-        tensor : (H,W) or (C,H,W) or (*,C,H,W) tensor to display
-        folderpath : relative path of folder where to save the image
-        name : name of the image (do not include extension)
-        columns : number of columns to use for the grid of images (default 8 or less)
-    """
-    tensor = tensor.detach().cpu()
-
-    if(len(tensor.shape)==2) :
-        fig = plt.figure()
-        plt.imshow(tensor[None,:,:])
-        plt.axis('off')
-        plt.savefig(os.path.join(folderpath,f"{name}.png"),bbox_inches='tight')
-    if(len(tensor.shape)==3) :
-        fig = plt.figure()
-        plt.imshow(tensor.permute((1,2,0)))
-        plt.axis('off')
-        plt.savefig(os.path.join(folderpath,f"{name}.png"),bbox_inches='tight')
-    elif(len(tensor.shape)==4) :
-        # Assume B,C,H,W
-        B=tensor.shape[0]
-        if(columns is not None):
-            numCol=columns
-        else :
-            numCol=min(8,B)
-
-        fig = plt.figure()
-        
-        to_show=make_grid(tensor,nrow=numCol,pad_value=0. ,padding=2)
-        if(tensor.shape[1]==1):
-            to_show=to_show.mean(dim=0,keepdim=True)
-
-        plt.imshow(to_show.permute(1,2,0))
-        if(tensor.shape[1]==1):
-            plt.colorbar()
-
-        plt.axis('off')
-        plt.savefig(os.path.join(folderpath,f"{name}.png"),bbox_inches='tight')
-    elif(len(tensor.shape)>4):
-        tensor = tensor.reshape((-1,tensor.shape[-3],tensor.shape[-2],tensor.shape[-1])) # assume all batch dimensions
-        print("WARNING : assuming extra dimension are all batch dimensions, newshape : ",tensor.shape)
-        saveTens(tensor,folderpath,name,columns)
-    else :
-        raise Exception(f"Tensor shape should be (H,W), (C,H,W) or (*,C,H,W), but got : {tensor.shape} !")
 
 @torch.no_grad()
 def _make_save_video(video_tens,folderpath,name,fps=30):
