@@ -5,9 +5,16 @@ import cv2, numpy as np
 
 @torch.no_grad()
 def showTens(tensor, columns=None) :
-    '''
-        shows tensor as an image. Accepts (H,W), (C,H,W) and (*,C,H,W).
-    '''
+    """"
+        Shows tensor as an image using pyplot.
+        Any extra dimensions (*,C,H,W) are treated as batch dimensions.
+
+        Args:
+        tensor : (H,W) or (C,H,W) or (*,C,H,W) tensor to display
+        columns : number of columns to use for the grid of images (default 8 or less)
+    """
+    tensor = tensor.detach().cpu()
+
     if(len(tensor.shape)==2):
         fig = plt.figure()
         plt.imshow(tensor[None,:,:])
@@ -39,7 +46,7 @@ def showTens(tensor, columns=None) :
         plt.show()
     elif(len(tensor.shape)>4):
         tensor = tensor.reshape((-1,tensor.shape[-3],tensor.shape[-2],tensor.shape[-1])) # assume all batch dimensions
-        print("WARNING : assuming extra dimension are all batch dimensions, newshape : ",tensor.shape)
+        print("Assuming extra dimension are all batch dimensions, newshape : ",tensor.shape)
         showTens(tensor,columns)
     else :
         raise Exception(f"Tensor shape should be (H,W), (C,H,W) or (*,C,H,W), but got : {tensor.shape} !")
@@ -57,6 +64,8 @@ def saveTensVideo(tensor,folderpath,name="videotensor",columns=None,fps=30,out_s
         fps : fps of the video (default 30)
         out_size : Width of output video (height adapts to not deform videos) (default 800)
     """
+    tensor = tensor.detach().cpu()
+
     if(len(tensor.shape)<3):
         raise ValueError(f"Tensor shape should be (T,H,W), (T,3,H,W) or (*,T,3,H,W), but got : {tensor.shape} !")
     elif(len(tensor.shape)==3):
@@ -160,10 +169,19 @@ def gridify(tensor,out_size=800,columns=None):
     return tensor
 
 @torch.no_grad()
-def saveTensImage(tensor, folderpath,name="imagetensor",columns=None):
-    '''
-        Saves tensor as an image. Accepts both (C,H,W) and (*,C,H,W). 
-    '''
+def saveTens(tensor, folderpath,name="imagetensor",columns=None):
+    """
+        Saves tensor as a png image using pyplot.
+        Any extra dimensions (*,C,H,W) are treated as batch dimensions.
+
+        Args:
+        tensor : (H,W) or (C,H,W) or (*,C,H,W) tensor to display
+        folderpath : relative path of folder where to save the image
+        name : name of the image (do not include extension)
+        columns : number of columns to use for the grid of images (default 8 or less)
+    """
+    tensor = tensor.detach().cpu()
+
     if(len(tensor.shape)==2) :
         fig = plt.figure()
         plt.imshow(tensor[None,:,:])
@@ -191,13 +209,13 @@ def saveTensImage(tensor, folderpath,name="imagetensor",columns=None):
         plt.imshow(to_show.permute(1,2,0))
         if(tensor.shape[1]==1):
             plt.colorbar()
-        #createGrid(tensor,fig,numCol)
+
         plt.axis('off')
         plt.savefig(os.path.join(folderpath,f"{name}.png"),bbox_inches='tight')
     elif(len(tensor.shape)>4):
         tensor = tensor.reshape((-1,tensor.shape[-3],tensor.shape[-2],tensor.shape[-1])) # assume all batch dimensions
         print("WARNING : assuming extra dimension are all batch dimensions, newshape : ",tensor.shape)
-        saveTensImage(tensor,folderpath,name,columns)
+        saveTens(tensor,folderpath,name,columns)
     else :
         raise Exception(f"Tensor shape should be (H,W), (C,H,W) or (*,C,H,W), but got : {tensor.shape} !")
 
