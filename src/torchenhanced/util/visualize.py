@@ -64,7 +64,7 @@ def saveTens(tensor, folderpath,name="imagetensor",columns=None):
         columns : number of columns to use for the grid of images (default 8 or less)
     """
     tensor = tensor.detach().cpu()
-
+    os.makedirs(folderpath,exist_ok=True)
     if(len(tensor.shape)==2) :
         fig = plt.figure()
         plt.imshow(tensor[None,:,:])
@@ -116,6 +116,7 @@ def saveTensVideo(tensor,folderpath,name="videotensor",columns=None,fps=30,out_s
         out_size : Width of output video (height adapts to not deform videos) (default 800)
     """
     tensor = tensor.detach().cpu()
+    os.makedirs(folderpath,exist_ok=True)
 
     if(len(tensor.shape)<3):
         raise ValueError(f"Tensor shape should be (T,H,W), (T,3,H,W) or (*,T,3,H,W), but got : {tensor.shape} !")
