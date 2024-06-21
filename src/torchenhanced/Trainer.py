@@ -671,7 +671,9 @@ class Trainer:
 
         self.logger.log({'ksamples' : self.samples//1000},commit=False)
         self.logger.log({'epochs': self.epochs},commit=False)
+        self.logger.log({'batches': self.batches},commit=False)
         self.logger.log({'steps': self.steps_done},commit=True)
+
 
 
     def _step_batch(self, batch_data, n_aggreg, aggregate, step_sched):
@@ -749,6 +751,7 @@ class Trainer:
         self.logger.define_metric("epochs",hidden=True)
         self.logger.define_metric("steps",hidden=True)
         self.logger.define_metric("ksamples",hidden=True)
+        self.logger.define_metric("batches",hidden=True)
 
     def _save_and_backup(self,curstep,save_every,backup_every):
         # We use curstep-1, to save at a moment consistent with the valid
