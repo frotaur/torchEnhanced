@@ -7,3 +7,4 @@ dist
 wandb
 data
 test_torchenhanced
+.vscode

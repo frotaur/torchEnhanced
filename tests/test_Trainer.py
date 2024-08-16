@@ -9,7 +9,7 @@ from torchvision.datasets import MNIST
 import torch.nn.functional as F
 from torchvision import transforms as t
 from src.torchenhanced import Trainer, DevModule, ConfigModule
-import  os,time
+import  os,time, shutil
 
 curfold = pathlib.Path(__file__).parent
 
@@ -84,6 +84,7 @@ class LinearTrainer(Trainer):
 def test_parallel():
     # Not much happening here, just test that we have no errors
     # EPOCHS :
+    shutil.rmtree(os.path.join(curfold,'test_torchenhanced'),ignore_errors=True)
     trainer = LinearTrainer(run_name='test_ep_paral', project_name='test_torchenhanced', 
                             save_loc=os.path.join(curfold),reach_plateau=200, 
                             run_config={'manamajeff':True},parallel=['cuda:0'],device='cpu')
@@ -109,6 +110,8 @@ def test_parallel():
     trainer.train_steps(steps=200, batch_size=10, step_log=50, save_every=50,aggregate=2, valid_every=100)
 
 def test_aggregate():
+    shutil.rmtree(os.path.join(curfold,'test_torchenhanced'),ignore_errors=True)
+
     trainer = LinearTrainer(run_name='test_aggregate', project_name='test_torchenhanced', 
                             save_loc=os.path.join(curfold),reach_plateau=200)
     
@@ -117,9 +120,9 @@ def test_aggregate():
     assert trainer.batches == 400, f"Batch mismatch : {trainer.batches} vs expected 400"
     assert trainer.steps_done == 200, f"Step mismatch : {trainer.steps_done} vs expected 200"
 
-
-
 def test_resume_train():
+    shutil.rmtree(os.path.join(curfold,'test_torchenhanced'),ignore_errors=True)
+
     trainer = LinearTrainer(run_name='test_resume_train', project_name='test_torchenhanced', save_loc=os.path.join(curfold),
                             reach_plateau=1500)
     trainer.change_lr(1e-4)
@@ -146,6 +149,8 @@ def test_resume_train():
     # Look on wandb to see if they are the same
 
 def test_save_weights():
+    shutil.rmtree(os.path.join(curfold,'test_torchenhanced'),ignore_errors=True)
+
     lintra = LinearTrainer(run_name='test_save_weights', project_name='test_torchenhanced', save_loc=os.path.join(curfold))
     lintra.save_state()
 
@@ -162,7 +167,8 @@ def test_Trainer_config():
 
 
 # Probably need to add more unit_tests...
-test_save_weights()
-test_parallel()
-test_aggregate()
-test_resume_train()
+if __name__ == "__main__":
+    test_save_weights()
+    test_parallel()
+    test_aggregate()
+    test_resume_train()

@@ -54,4 +54,4 @@ def test_configmodule_weights():
 
     assert module.paranum>0, 'Problem in ConfigModule load_weights'
 
-test_configmodule_weights()
+# test_configmodule_weights()

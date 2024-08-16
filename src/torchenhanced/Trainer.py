@@ -39,8 +39,9 @@ class Trainer:
 
     def __init__(self, model : nn.Module, optim :Optimizer =None, scheduler : lrsched._LRScheduler =None,*, 
                  save_loc=None,device:str ='cpu',parallel:list[int]=None, run_name :str = None,project_name :str = None,
-                 run_config : dict = {}):
+                 run_config : dict = {}, DEBUG_useitem:bool=False):
         super().__init__()
+        self.DEBUG_useitem = DEBUG_useitem
         
         self.parallel_train = parallel is not None
         self.parallel_devices = parallel
@@ -69,6 +70,7 @@ class Trainer:
         else :
             self.scheduler = scheduler
         
+        self.cooldown_data = {'do_cooldown':None, 'cooldown_steps':None, 'cooldown_started':None} # For built-in lr cooldown support
 
         # Session hash, the date to not overwrite sessions
         self.session_hash = datetime.now().strftime('%H-%M_%d_%m')
@@ -110,6 +112,75 @@ class Trainer:
         for g in self.optim.param_groups:
             g['lr'] = new_lr
         
+    def cooldown_lr(self, cooldown_steps):
+        """
+            When called, starts a cooldown period for the learning rate.
+            This is inspired by https://arxiv.org/pdf/2405.18392
+
+            Args :
+            cooldown_steps : int, number of steps for the cooldown. 
+        """
+        self.save_state(suffix='cdstart',epoch=self.epochs) # Snapshot before cooldown
+        
+        self.scheduler = lrsched.LinearLR(self.optim,1., 0.,total_iters=cooldown_steps)
+
+        print(f'Cooldown period started, doing {cooldown_steps} steps, \
+              i.e. {cooldown_steps/self.steps_done*100:.1f}% of total steps.')
+        
+        self.cooldown_data['cooldown_started']=True
+
+
+    def save_state(self,epoch:int = None, suffix:str = None):
+        """
+            Saves trainer state. Describe by the following dictionary :
+
+            state_dict : dict, contains at least the following key-values:
+                - 'model' : contains model.state_dict
+                - 'session' : contains self.session_hash
+                - 'optim' :optimizer
+                - 'scheduler : scheduler
+                - 'model_config' : json allowing one to reconstruct the model.
+                - 'run_id' : id of the run, for wandb
+                - 'steps_done' : only applicable in case of step training, number of steps done
+                - 'samples' : number of samples seen
+            If you want a more complicated state, training_epoch should be overriden.
+
+            Args :
+            epoch : int, if not None, will append the epoch number to the state name, and save in 'backups' folder.
+            suffix : str, if not None, will be appended to the state name.
+        """
+        os.makedirs(self.save_loc,exist_ok=True)
+        
+        # Avoid saving the DataParallel
+        saving_model = self.model.module if self.parallel_train else self.model
+    
+        # Create the state
+        try :
+            model_config = saving_model.config
+        except AttributeError as e:
+            raise AttributeError(f"Error while fetching model config ! Make sure model.config is defined. (see ConfigModule doc).")
+
+        state = dict(
+        optim_state=self.optim.state_dict(),scheduler_state=self.scheduler.state_dict(),model_state=saving_model.state_dict(),
+        model_name=saving_model.class_name,optim_name=self.optim.__class__.__name__,scheduler_name=self.scheduler.__class__.__name__,
+        model_config=model_config,session=self.session_hash,run_id=self.run_id, steps_done=self.steps_done,epochs=self.epochs,
+        samples=self.samples, batches=self.batches,run_config=self.run_config, cooldown_data=self.cooldown_data
+        )
+
+        name = self.run_name
+        if(suffix is not None):
+            name = name+'_'+suffix
+
+        if (epoch is not None):
+            os.makedirs(os.path.join(self.save_loc,'backups'),exist_ok=True)
+            name=os.path.join('backups',name+'_'+f'{epoch:.2f}')
+
+        name = name + '.state'
+        saveloc = os.path.join(self.save_loc,name)
+        torch.save(state,saveloc)
+
+        print(f'Saved training state at {datetime.now().strftime("%H-%M_%d_%m")}')
+        print(f'At save, {self.epochs} epochs are done.')
 
     def load_state(self,state_path : str, strict: bool=True):
         """
@@ -131,15 +202,22 @@ class Trainer:
         if(self.model.config != state_dict['model_config']):
             print('WARNING ! Loaded model configuration and state model_config\
                   do not match. This may generate errors.')
-            
+        
         assert self.model.class_name == state_dict['model_name'], f'Loaded model {state_dict["model_name"]} mismatch with current: {self.model.class_name}!'
-        assert self.optim.__class__.__name__ == state_dict['optim_name'], f'Loaded optimizer : {state_dict["optim_name"]} mismatch with current: {self.optim.__class__.__name__} !'
-        assert self.scheduler.__class__.__name__ == state_dict['scheduler_name'], f'Loaded scheduler : {state_dict["scheduler_name"]} mismatch with current: {self.optim.__class__.__name__} !'
-
         self.model.load_state_dict(state_dict['model_state'],strict=strict)
-        self.session_hash = state_dict['session']
+        assert self.optim.__class__.__name__ == state_dict['optim_name'], f'Loaded optimizer : {state_dict["optim_name"]} mismatch with current: {self.optim.__class__.__name__} !'
         self.optim.load_state_dict(state_dict['optim_state'])
+
+        self.cooldown_data = state_dict.get('cooldown_data',self.cooldown_data)
+
+        if(self.cooldown_data['cooldown_started']==True):
+            print('Detected started cooldown, switching scheduler to cooldown.')
+            self.scheduler = lrsched.LinearLR(self.optim,1., 0.,total_iters=1)# Placeholder data, will be updated in cooldown_lr
+
+        assert self.scheduler.__class__.__name__ == state_dict['scheduler_name'], f'Loaded scheduler : {state_dict["scheduler_name"]} mismatch with current: {self.optim.__class__.__name__} !'
         self.scheduler.load_state_dict(state_dict['scheduler_state'])
+        
+        self.session_hash = state_dict['session']
         self.run_id = state_dict['run_id']
         self.steps_done = state_dict.get('steps_done',0)
         self.batches = state_dict.get('batches',0)
@@ -182,54 +260,6 @@ class Trainer:
 
         print('Model load successful !')
         print(f'Loaded model had {state_dict["epochs"]} epochs trained.')
-
-    def save_state(self,epoch:int = None):
-        """
-            Saves trainer state. Describe by the following dictionary :
-
-            state_dict : dict, contains at least the following key-values:
-                - 'model' : contains model.state_dict
-                - 'session' : contains self.session_hash
-                - 'optim' :optimizer
-                - 'scheduler : scheduler
-                - 'model_config' : json allowing one to reconstruct the model.
-                - 'run_id' : id of the run, for wandb
-                - 'steps_done' : only applicable in case of step training, number of steps done
-                - 'samples' : number of samples seen
-            If you want a more complicated state, training_epoch should be overriden.
-
-            Args :
-            epoch : int, if not None, will append the epoch number to the state name.
-        """
-        os.makedirs(self.save_loc,exist_ok=True)
-        
-        # Avoid saving the DataParallel
-        saving_model = self.model.module if self.parallel_train else self.model
-    
-        # Create the state
-        try :
-            model_config = saving_model.config
-        except AttributeError as e:
-            raise AttributeError(f"Error while fetching model config ! Make sure model.config is defined. (see ConfigModule doc).")
-
-        state = dict(
-        optim_state=self.optim.state_dict(),scheduler_state=self.scheduler.state_dict(),model_state=saving_model.state_dict(),
-        model_name=saving_model.class_name,optim_name=self.optim.__class__.__name__,scheduler_name=self.scheduler.__class__.__name__,
-        model_config=model_config,session=self.session_hash,run_id=self.run_id, steps_done=self.steps_done,epochs=self.epochs,
-        samples=self.samples, batches=self.batches,run_config=self.run_config
-        )
-
-        name = self.run_name
-        if (epoch is not None):
-            os.makedirs(os.path.join(self.save_loc,'backups'),exist_ok=True)
-            name=os.path.join('backups',name+'_'+f'{epoch:.2f}')
-
-        name = name + '.state'
-        saveloc = os.path.join(self.save_loc,name)
-        torch.save(state,saveloc)
-
-        print(f'Saved training state at {datetime.now().strftime("%H-%M_%d_%m")}')
-        print(f'At save, {self.epochs} epochs are done.')
 
 
     @staticmethod
@@ -449,6 +479,7 @@ class Trainer:
                      num_workers:int=0,aggregate:int=1,
                      batch_tqdm:bool=True,train_init_params:dict={}):
         """
+            # TODO : GET IT UP TO SPEED WITH TRAIN_STEPS
             Trains for specified epoch number. This method trains the model in a basic way,
             and does very basic logging. At the minimum, it requires process_batch and 
             process_batch_valid to be overriden, and other logging methods are optionals.
@@ -458,9 +489,8 @@ class Trainer:
             Params :
             epochs : number of epochs to train for
             batch_size : batch size
-            batch_sched : if True, scheduler steps (by a lower amount) between each batch.
-            Note that this use is deprecated, so it is recommended to keep False. For now, 
-            necessary for some Pytorch schedulers (cosine annealing).
+            batch_sched : if True, scheduler steps at each optimizer step. If used, take care
+            to choose scheduler parameters accordingly. If False, will step scheduler at each epoch.
             save_every : saves trainer state every 'save_every' EPOCHS
             backup_every : saves trainer state without overwrite every 'backup_every' EPOCHS
             step_log : If not none, will also log every step_log optim steps, in addition to each epoch
@@ -469,7 +499,8 @@ class Trainer:
             batch_tqdm : if True, will use tqdm for the batch loop, if False, will not use tqdm
             train_init_params : Parameter dictionary passed as argument to train_init
         """
-        
+        print('WARNING : train_epochs is not up to date, prefer using train_steps for now. Will be \
+              update in the future, if I find it is useful.')
         # Initiate logging
         self._init_logger()
         # For all plots, we plot against the epoch by default
@@ -516,11 +547,7 @@ class Trainer:
             for batchnum,batch_data in iter_on :
                 # Process the batch
                 self.batchnum=batchnum
-                n_aggreg = self._step_batch(batch_data,n_aggreg, aggregate, step_sched=False)
-
-
-                if(batch_sched):
-                    self.scheduler.step(self.epochs)
+                n_aggreg = self._step_batch(batch_data,n_aggreg, aggregate, step_sched=batch_sched)
 
                 self.samples+=batch_size
                 self.epochs+=1/self.totbatch
@@ -530,9 +557,6 @@ class Trainer:
             
             if(not batch_sched):
                 self.scheduler.step()
-            else :
-                # Is useless in principle, just to synchronize with the rounding of epochs
-                self.scheduler.step(self.epochs)
             
             # Epoch of validation
             if(validate):
@@ -550,12 +574,13 @@ class Trainer:
             # Save and backup when applicable
             self._save_and_backup(curstep=ep_incr,save_every=save_every,backup_every=backup_every)
 
+        self.save_state() # Save at the end of training
         self.logger.finish()
 
     def train_steps(self,steps : int,batch_size:int,*,save_every:int=50,
                     backup_every: int=None, valid_every:int=1000,step_log:int=None,
                     num_workers:int=0,aggregate:int=1,pickup:bool=True,resume_batches:bool=False, 
-                    train_init_params:dict={}):
+                    train_init_params:dict={}, cooldown_finish:bool|float=False, cooldown_now:bool=False):
         """
             Trains for specified number of steps(batches). This method trains the model in a basic way,
             and does very basic logging. At the minimum, it requires process_batch and 
@@ -575,15 +600,46 @@ class Trainer:
             use self.do_step_log to know when to log. 
             num_workers : number of workers in dataloader
             aggregate : how many batches to aggregate (effective batch_size is aggreg*batch_size)
-            pickup : if False, will train for exactly 'steps' steps. If True, will restart at the previous
-            number of steps, and train until total number of steps is 'steps'. Useful for resuming training,
+            pickup : if False, will train for exactly 'steps' more steps. If True, will restart at the previous
+            number of steps, and train until TOTAL number of steps is 'steps'. Useful for resuming training,
             if you want to train for a certain specific number of steps. In both cases, the training resumes
             where it left off, only difference is how many MORE steps it will do.
             resume_batches : if True, will resume training assuming the first self.batches on the dataloader
             are already done. Usually, use ONLY if dataloader does NOT shuffle.
             train_init_params : Parameter dictionary passed as argument to train_init
+            cooldown_finish : if True or float in [0,1], will finish with a lr cooldown period.
+            If float, will cooldown for that fraction of the total steps, otherwise 10%.
+            cooldown_now : if True, immediately start a lr cooldown period.
         """
-    
+        
+        # LR cooldown stuff : 
+        update_cooldown = (self.cooldown_data['cooldown_started'] is None) or (self.cooldown_data['cooldown_started'] is False)
+        cooldown_wanted = cooldown_now or bool(cooldown_finish)
+        total_steps_wanted = steps if pickup else self.steps_done+steps
+
+        if(update_cooldown):
+            # No cooldown data, update with the provided one
+            self.cooldown_data['do_cooldown'] = cooldown_wanted # yes either if finish, or now cooldown
+            self.cooldown_data['cooldown_started'] = False
+
+            percent_cooldown = 0.1 if isinstance(cooldown_finish,bool) else cooldown_finish
+            self.cooldown_data['cooldown_steps'] = int(total_steps_wanted*percent_cooldown)
+
+            if(cooldown_now):
+                cooldown_step_start = 0 # Ensures it registers as started
+                steps_remaining = max(0,total_steps_wanted-self.steps_done)
+
+                # Avoid doing useless steps after finishing cooldown :
+                steps = min(steps_remaining,self.cooldown_data['cooldown_steps']) 
+
+                self.cooldown_lr(cooldown_steps=self.cooldown_data['cooldown_steps']) # Start cooldown
+            elif(bool(cooldown_finish)):
+                cooldown_step_start = total_steps_wanted - self.cooldown_data['cooldown_steps'] 
+            else :
+                cooldown_step_start = None # No cooldown
+        elif(self.cooldown_data['cooldown_started'] and cooldown_wanted):
+            print('WARNING : Cooldown already started, ignoring provided cooldown parameters.')
+
         # Initiate logging
         self._init_logger()
         # For all plots, we plot against the batches by default, since we do step training
@@ -657,7 +713,15 @@ class Trainer:
                     steps_completed=True
                     self._save_and_backup(1,save_every,backup_every)
                     break
-            
+                
+                start_cooldown = self.cooldown_data['do_cooldown'] and \
+                                 self.cooldown_data['cooldown_started']==False and \
+                                 self.steps_done>=cooldown_step_start # NOTE :maybe put == ? should be okay either way
+                
+                if(start_cooldown):
+                    self.cooldown_lr(cooldown_steps=self.cooldown_data['cooldown_steps'])
+        
+        self.save_state() # Save at the end of training
         wandb.finish()
 
     def _update_x_axis(self):
@@ -684,14 +748,22 @@ class Trainer:
         loss = self.process_batch(batch_data)
         
         # Update default logging (NOTE :maybe I shouldn't do this, to avoid synchronization of CUDA ?)
-        # TODO : benchmark with and without the loss.item() to see if it changes significantly
-        self.step_loss.append(loss.item())
-        if(self.epoch_loss is not None):
-            self.epoch_loss.append(loss.item())
-        
+        if(self.DEBUG_useitem):
+            self.step_loss.append(loss.item())
+            if(self.epoch_loss is not None):
+                self.epoch_loss.append(loss.item())
+        else:
+            self.step_loss.append(loss.detach())
+            if(self.epoch_loss is not None):
+                self.epoch_loss.append(loss.detach())
+
         # Do default logging
         if(self.do_step_log):
-            self.logger.log({'loss/train_step':sum(self.step_loss)/len(self.step_loss)},commit=False)
+            if(self.DEBUG_useitem):
+                self.logger.log({'loss/train_step':sum(self.step_loss)/len(self.step_loss)},commit=False)
+            else:
+                self.logger.log({'loss/train_step':torch.mean(torch.stack(self.step_loss)).item()},commit=False)
+
             self._update_x_axis()
             self.step_loss=[]
     
@@ -734,13 +806,19 @@ class Trainer:
             self.batchnum=v_batchnum
             
             loss = self.process_batch_valid(v_batch_data)
-            val_loss.append(loss.item())
+            if(self.DEBUG_useitem):
+                val_loss.append(loss.item())
+            else:
+                val_loss.append(loss.detach())
         
         self.totbatch=t_totbatch
         self.batchnum=t_batchnum
         
         # Log validation data
-        self.logger.log({'loss/valid':sum(val_loss)/len(val_loss)},commit=False)
+        if(self.DEBUG_useitem):
+            self.logger.log({'loss/valid':sum(val_loss)/len(val_loss)},commit=False)
+        else:
+            self.logger.log({'loss/valid':torch.mean(torch.stack(val_loss)).item()},commit=False)
     
     
     def _init_logger(self):
