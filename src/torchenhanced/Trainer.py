@@ -623,20 +623,20 @@ class Trainer:
             self.cooldown_data['cooldown_started'] = False
 
             percent_cooldown = 0.1 if isinstance(cooldown_finish,bool) else cooldown_finish
-            self.cooldown_data['cooldown_steps'] = int(total_steps_wanted*percent_cooldown)
 
             if(cooldown_now):
                 cooldown_step_start = 0 # Ensures it registers as started
                 steps_remaining = max(0,total_steps_wanted-self.steps_done)
-
+                self.cooldown_data['cooldown_steps'] = int(self.steps_done*percent_cooldown) # start immediately
                 # Avoid doing useless steps after finishing cooldown :
                 steps = min(steps_remaining,self.cooldown_data['cooldown_steps']) 
 
                 self.cooldown_lr(cooldown_steps=self.cooldown_data['cooldown_steps']) # Start cooldown
             elif(bool(cooldown_finish)):
+                self.cooldown_data['cooldown_steps'] = int(total_steps_wanted*percent_cooldown) # start at end
                 cooldown_step_start = total_steps_wanted - self.cooldown_data['cooldown_steps'] 
             else :
-                cooldown_step_start = None # No cooldown
+                cooldown_step_start = None # No cooldownW
         elif(self.cooldown_data['cooldown_started'] and cooldown_wanted):
             print('WARNING : Cooldown already started, ignoring provided cooldown parameters.')
 
