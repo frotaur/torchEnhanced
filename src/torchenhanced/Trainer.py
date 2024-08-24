@@ -628,9 +628,9 @@ class Trainer:
                 cooldown_step_start = 0 # Ensures it registers as started
                 steps_remaining = max(0,total_steps_wanted-self.steps_done)
                 self.cooldown_data['cooldown_steps'] = int(self.steps_done*percent_cooldown) # start immediately
-                # Avoid doing useless steps after finishing cooldown :
-                steps = min(steps_remaining,self.cooldown_data['cooldown_steps']) 
-
+                # Set to do exactly cooldown steps
+                steps = self.cooldown_data['cooldown_steps']
+                pickup = False # No pickup, we do exactly the cooldown steps
                 self.cooldown_lr(cooldown_steps=self.cooldown_data['cooldown_steps']) # Start cooldown
             elif(bool(cooldown_finish)):
                 self.cooldown_data['cooldown_steps'] = int(total_steps_wanted*percent_cooldown) # start at end
