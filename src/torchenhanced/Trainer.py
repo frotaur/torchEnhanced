@@ -35,11 +35,12 @@ class Trainer:
         run_name : str, for wandb and saves, name of the training session
         project_name : str, name of the project in which the run belongs
         run_config : dict, dictionary of hyperparameters (any). Will be viewable in wandb.
+        no_logging : bool, if True, will not log anything, and will not use wandb.
     """
 
     def __init__(self, model : nn.Module, optim :Optimizer =None, scheduler : lrsched._LRScheduler =None,*, 
                  save_loc=None,device:str ='cpu',parallel:list[int]=None, run_name :str = None,project_name :str = None,
-                 run_config : dict = {}, DEBUG_useitem:bool=False):
+                 run_config : dict = {}, no_logging = False, DEBUG_useitem:bool=False):
         super().__init__()
         self.DEBUG_useitem = DEBUG_useitem
         
@@ -103,6 +104,7 @@ class Trainer:
 
         # Used for logging instead of wandb.log, useful if wandb not imported
         self.logger = None
+        self.logging = not no_logging
 
     def change_lr(self, new_lr):
         """
@@ -502,9 +504,10 @@ class Trainer:
         print('WARNING : train_epochs is not up to date, prefer using train_steps for now. Will be \
               update in the future, if I find it is useful.')
         # Initiate logging
-        self._init_logger()
-        # For all plots, we plot against the epoch by default
-        self.logger.define_metric("*", step_metric='epochs')
+        if(self.logging):
+            self._init_logger()
+            # For all plots, we plot against the epoch by default
+            self.logger.define_metric("*", step_metric='epochs')
 
         self.train_init(**train_init_params)
         
@@ -561,21 +564,24 @@ class Trainer:
             # Epoch of validation
             if(validate):
                 self._validate(valid_loader)
-                self.valid_log()
+                if(self.logging):
+                    self.valid_log()
                 self.model.train()
     
 
             # Log training loss at epoch level
-            self.logger.log({'loss/train_epoch':sum(self.epoch_loss)/len(self.epoch_loss)},commit=False)
-            self.epoch_log()
-                
-            self._update_x_axis()
+            if(self.logging):
+                self.logger.log({'loss/train_epoch':sum(self.epoch_loss)/len(self.epoch_loss)},commit=False)
+                self.epoch_log()
+                    
+                self._update_x_axis()
             
             # Save and backup when applicable
             self._save_and_backup(curstep=ep_incr,save_every=save_every,backup_every=backup_every)
 
         self.save_state() # Save at the end of training
-        self.logger.finish()
+        if(self.logging):
+            self.logger.finish()
 
     def train_steps(self,steps : int,batch_size:int,*,save_every:int=50,
                     backup_every: int=None, valid_every:int=1000,step_log:int=None,
@@ -641,9 +647,10 @@ class Trainer:
             print('WARNING : Cooldown already started, ignoring provided cooldown parameters.')
 
         # Initiate logging
-        self._init_logger()
-        # For all plots, we plot against the batches by default, since we do step training
-        self.logger.define_metric("*", step_metric='steps')
+        if(self.logging):
+            self._init_logger()
+            # For all plots, we plot against the batches by default, since we do step training
+            self.logger.define_metric("*", step_metric='steps')
 
         self.train_init(**train_init_params)
         
@@ -696,8 +703,9 @@ class Trainer:
                 # Validation if applicable
                 if(validate and self.batches%valid_every==valid_every-1):
                     self._validate(valid_loader)
-                    self.valid_log()
-                    self._update_x_axis()
+                    if(self.logging):
+                        self.valid_log()
+                        self._update_x_axis()
                     self.model.train()
 
 
@@ -722,7 +730,8 @@ class Trainer:
                     self.cooldown_lr(cooldown_steps=self.cooldown_data['cooldown_steps'])
         
         self.save_state() # Save at the end of training
-        wandb.finish()
+        if(self.logging):
+            self.logger.finish()
 
     def _update_x_axis(self):
         """
@@ -747,7 +756,7 @@ class Trainer:
         # Compute loss, and custom batch logging
         loss = self.process_batch(batch_data)
         
-        # Update default logging (NOTE :maybe I shouldn't do this, to avoid synchronization of CUDA ?)
+        # Update default logging 
         if(self.DEBUG_useitem):
             self.step_loss.append(loss.item())
             if(self.epoch_loss is not None):
@@ -759,12 +768,13 @@ class Trainer:
 
         # Do default logging
         if(self.do_step_log):
-            if(self.DEBUG_useitem):
-                self.logger.log({'loss/train_step':sum(self.step_loss)/len(self.step_loss)},commit=False)
-            else:
-                self.logger.log({'loss/train_step':torch.mean(torch.stack(self.step_loss)).item()},commit=False)
+            if(self.logging):
+                if(self.DEBUG_useitem):
+                    self.logger.log({'loss/train_step':sum(self.step_loss)/len(self.step_loss)},commit=False)
+                else:
+                    self.logger.log({'loss/train_step':torch.mean(torch.stack(self.step_loss)).item()},commit=False)
 
-            self._update_x_axis()
+                self._update_x_axis()
             self.step_loss=[]
     
         loss=loss/aggregate # Rescale loss if aggregating.
@@ -815,11 +825,12 @@ class Trainer:
         self.batchnum=t_batchnum
         
         # Log validation data
-        if(self.DEBUG_useitem):
-            self.logger.log({'loss/valid':sum(val_loss)/len(val_loss)},commit=False)
-        else:
-            self.logger.log({'loss/valid':torch.mean(torch.stack(val_loss)).item()},commit=False)
-    
+        if(self.logging):
+            if(self.DEBUG_useitem):
+                self.logger.log({'loss/valid':sum(val_loss)/len(val_loss)},commit=False)
+            else:
+                self.logger.log({'loss/valid':torch.mean(torch.stack(val_loss)).item()},commit=False)
+        
     
     def _init_logger(self):
         """ Initiate the logger, and define the custom x axis metrics """

@@ -27,14 +27,15 @@ class LinSimple(ConfigModule):
         return self.layer(x)
     
 class LinearTrainer(Trainer):
-    def __init__(self, run_name: str = None, project_name: str = None, save_loc=None,reach_plateau=100,run_config={},parallel=None,device='cpu'):
+    def __init__(self, run_name: str = None, project_name: str = None, save_loc=None,reach_plateau=100,run_config={},parallel=None,device='cpu',no_logging=False):
         model = LinSimple()
         opti = torch.optim.Adam(model.parameters(),lr=1e-3)
         schedo = lrsched.LinearLR(opti,start_factor=0.01,end_factor=1,total_iters=reach_plateau)
 
         super().__init__(model,optim=opti,scheduler=schedo, run_name=run_name, 
                          project_name=project_name,save_loc=save_loc,
-                         run_config=run_config,parallel=parallel,device=device)
+                         run_config=run_config,parallel=parallel,device=device,
+                         no_logging=no_logging)
 
         self.dataset =Subset(MNIST(os.path.join(curfold,'data'),download=True,transform=t.ToTensor()),range(100))
     
@@ -57,7 +58,7 @@ class LinearTrainer(Trainer):
         # assert self.epoch == data_dict['epoch'], f"Epoch mismatch {self.epoch} vs {data_dict['epoch']}"
         # assert self.batchnum == data_dict['batchnum'], f"Batchnum mismatch {self.batchnum} vs {data_dict['batchnum']}"
 
-        if(self.do_step_log):
+        if(self.do_step_log and self.logging):
             self.logger.log({'lossme/train':loss.item()},commit=False)
             self.logger.log({'other/lr':self.scheduler.get_last_lr()[0]},commit=False)
         
@@ -165,6 +166,9 @@ def test_Trainer_config():
     config = ma.config
     assert config == {'hidden':32, 'out':15}, f"Invalid config : {config}, should be {{'hidden':32, 'out':15}}"
 
+def test_no_logging():
+    trainee = LinearTrainer(run_name='test_no_logging', project_name='test_torchenhanced', save_loc=os.path.join(curfold),no_logging=True)
+    trainee.train_steps(steps=200, batch_size=10, step_log=30, save_every=60,aggregate=2, valid_every=100)
 
 # Probably need to add more unit_tests...
 if __name__ == "__main__":
@@ -172,3 +176,4 @@ if __name__ == "__main__":
     test_parallel()
     test_aggregate()
     test_resume_train()
+    test_no_logging()
