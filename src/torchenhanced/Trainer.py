@@ -708,14 +708,15 @@ class Trainer:
                         self._update_x_axis()
                     self.model.train()
 
-
                 self.samples+=batch_size
                 self.epochs +=1/self.totbatch  # NOTE: Not great, but batches and steps update in _step_batch by necessity
 
 
-                # TODO minor bug, when we resume we shift by one minibatch the saving schedule
-                # Comes because the first save location is at %valid_every-1, so it last one less step since we start stepnum at 0
-                self._save_and_backup(self.steps_done,save_every,backup_every)
+                # OLD TODO (not sure if always so) minor bug, when we resume we shift by one minibatch the saving schedule
+                # Comes because the first save location is at %valid_every-1, so it lasts one less step since we start stepnum at 0
+                if(n_aggreg==0):
+                    # n_aggreg = 0 whenever we just stepped, so we can check for saving.
+                    self._save_and_backup(self.steps_done,save_every,backup_every)
 
                 if(self.stepnum>=steps):
                     steps_completed=True
