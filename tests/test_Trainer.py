@@ -22,7 +22,10 @@ class LinSimple(ConfigModule):
         super().__init__(config)
 
         self.layer = nn.Linear(hidden, out)
-    
+        # Initialize all weights to 1, bias to 0: 
+        self.layer.weight.data.fill_(1)
+        self.layer.bias.data.fill_(0)
+
     def forward(self, x):
         return self.layer(x)
     
@@ -41,7 +44,7 @@ class LinearTrainer(Trainer):
     
     def get_loaders(self, batch_size, num_workers=0):
         self.loss_val = []
-        return DataLoader(self.dataset, batch_size=batch_size, shuffle=False), DataLoader(self.dataset, batch_size=batch_size, shuffle=True)
+        return DataLoader(self.dataset, batch_size=batch_size, shuffle=False), DataLoader(self.dataset, batch_size=batch_size, shuffle=False)
     
     def process_batch(self, batch_data,**kwargs):
         x, y = batch_data
@@ -121,6 +124,24 @@ def test_aggregate():
     assert trainer.batches == 400, f"Batch mismatch : {trainer.batches} vs expected 400"
     assert trainer.steps_done == 200, f"Step mismatch : {trainer.steps_done} vs expected 200"
 
+def test_aggregate_visual_compare():
+    shutil.rmtree(os.path.join(curfold,'test_torchenhanced'),ignore_errors=True)
+
+    trainer = LinearTrainer(run_name='compare_aggreg', project_name='test_torchenhanced', 
+                            save_loc=os.path.join(curfold),reach_plateau=200)
+    
+    trainer.train_steps(steps=600, batch_size=10, step_log=20, save_every=60,aggregate=2, valid_every=100)
+
+    shutil.rmtree(os.path.join(curfold,'test_torchenhanced'),ignore_errors=True)
+
+    trainer = LinearTrainer(run_name='compare_no_aggreg', project_name='test_torchenhanced',
+                            save_loc=os.path.join(curfold),reach_plateau=200)
+    
+    trainer.train_steps(steps=600, batch_size=20, step_log=20, save_every=60,aggregate=1, valid_every=100)
+
+    print(f'Compare runs "compare_aggreg" and "compare_noaggreg" on wandb')
+    print(f'Train Losses won"t match exactly (because for aggregate, we have more datapoints), but validation should be equal')
+
 def test_resume_train():
     shutil.rmtree(os.path.join(curfold,'test_torchenhanced'),ignore_errors=True)
 
@@ -172,8 +193,9 @@ def test_no_logging():
 
 # Probably need to add more unit_tests...
 if __name__ == "__main__":
-    test_save_weights()
-    test_parallel()
-    test_aggregate()
-    test_resume_train()
-    test_no_logging()
+    # test_save_weights()
+    # test_parallel()
+    # test_aggregate()
+    # test_resume_train()
+    # test_no_logging()
+    test_aggregate_visual_compare()

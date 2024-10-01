@@ -2,7 +2,7 @@ import torch.nn as nn, math
 import torch, wandb, os
 import torch.optim.lr_scheduler as lrsched
 from torch.optim import Optimizer
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from tqdm import tqdm
 
 
@@ -40,7 +40,7 @@ class Trainer:
 
     def __init__(self, model : nn.Module, optim :Optimizer =None, scheduler : lrsched._LRScheduler =None,*, 
                  save_loc=None,device:str ='cpu',parallel:list[int]=None, run_name :str = None,project_name :str = None,
-                 run_config : dict = {}, no_logging = False, DEBUG_useitem:bool=False):
+                 run_config : dict = {}, no_logging = False):
         super().__init__()
         self.DEBUG_useitem = DEBUG_useitem
         
@@ -51,6 +51,9 @@ class Trainer:
             device = self.parallel_devices[0]
 
         self.model = model.to(device)
+
+        if(project_name is None):
+            project_name = 'unnamed_project'
 
         if(save_loc is None) :
             self.data_fold = os.path.join('.',project_name)
@@ -74,7 +77,9 @@ class Trainer:
         self.cooldown_data = {'do_cooldown':None, 'cooldown_steps':None, 'cooldown_started':None} # For built-in lr cooldown support
 
         # Session hash, the date to not overwrite sessions
-        self.session_hash = datetime.now().strftime('%H-%M_%d_%m')
+        # Use time in UTC+2, because I live in France
+        self.session_hash = datetime.now(timezone(timedelta(hours=2))).strftime('%H-%M_%d_%m')
+        
         if(run_name is None):
             self.run_name = self.session_hash
             run_name= os.path.join('.','runs',self.session_hash)
@@ -182,7 +187,7 @@ class Trainer:
         torch.save(state,saveloc)
 
         print(f'Saved training state at {datetime.now().strftime("%H-%M_%d_%m")}')
-        print(f'At save, {self.epochs} epochs are done.')
+        print(f'At save,{self.steps_done/1000:.2f}k steps are done, i.e. {self.epochs:.4f} epochs.')
 
     def load_state(self,state_path : str, strict: bool=True):
         """
@@ -262,7 +267,6 @@ class Trainer:
 
         print('Model load successful !')
         print(f'Loaded model had {state_dict["epochs"]} epochs trained.')
-
 
     @staticmethod
     def save_model_from_state(state_path:str,save_dir:str='.',name:str=None):
@@ -530,7 +534,7 @@ class Trainer:
         #Floor frac epochs, since we start at start of epoch, and also for the scheduler :
         self.epochs = int(self.epochs)
         print('Number of batches/epoch : ',len(train_loader))
-        self.stepnum = 0 # This is the current instance number of steps, using for when to log save etc
+        self.stepnum = 0 # This is the current instance number of steps
 
         self.step_log = step_log
         self.step_loss=[]
@@ -598,7 +602,7 @@ class Trainer:
 
             Params :
             batch_size : batch size
-            steps : number of steps (batches) to train for
+            steps : number of steps (optim calls) to train for
             save_every : saves trainer state every 'save_every' epochs
             backup_every : saves trainer state without overwrite every 'backup_every' steps
             valid_every : validates the model every 'valid_every' steps
@@ -642,7 +646,7 @@ class Trainer:
                 self.cooldown_data['cooldown_steps'] = int(total_steps_wanted*percent_cooldown) # start at end
                 cooldown_step_start = total_steps_wanted - self.cooldown_data['cooldown_steps'] 
             else :
-                cooldown_step_start = None # No cooldownW
+                cooldown_step_start = None # No cooldown
         elif(self.cooldown_data['cooldown_started'] and cooldown_wanted):
             print('WARNING : Cooldown already started, ignoring provided cooldown parameters.')
 
@@ -667,7 +671,7 @@ class Trainer:
             print('Parallel training on devices : ',self.parallel_devices)
             self.model = nn.DataParallel(self.model,device_ids=self.parallel_devices)
         
-        print('Number of batches/epoch : ',len(train_loader)/1000 ,'k')
+        print(f'Number of batches/epoch : {len(train_loader)/1000:.2f}k')
 
         self.step_log = step_log
         self.step_loss=[]
@@ -700,8 +704,10 @@ class Trainer:
                 self.batchnum=batchnum
                 n_aggreg = self._step_batch(batch_data,n_aggreg, aggregate,step_sched=True)
 
+                just_stepped = (n_aggreg==0)
                 # Validation if applicable
-                if(validate and self.batches%valid_every==valid_every-1):
+                # We WONT validate at the start, since first steps_done with just_stepped is 1
+                if(validate and self.steps_done%valid_every==0 and just_stepped):
                     self._validate(valid_loader)
                     if(self.logging):
                         self.valid_log()
@@ -712,9 +718,7 @@ class Trainer:
                 self.epochs +=1/self.totbatch  # NOTE: Not great, but batches and steps update in _step_batch by necessity
 
 
-                # OLD TODO (not sure if always so) minor bug, when we resume we shift by one minibatch the saving schedule
-                # Comes because the first save location is at %valid_every-1, so it lasts one less step since we start stepnum at 0
-                if(n_aggreg==0):
+                if(just_stepped):
                     # n_aggreg = 0 whenever we just stepped, so we can check for saving.
                     self._save_and_backup(self.steps_done,save_every,backup_every)
 
@@ -748,8 +752,6 @@ class Trainer:
         self.logger.log({'batches': self.batches},commit=False)
         self.logger.log({'steps': self.steps_done},commit=True)
 
-
-
     def _step_batch(self, batch_data, n_aggreg, aggregate, step_sched):
         """
             Internal function, makes one step of training given minibatch
@@ -758,22 +760,14 @@ class Trainer:
         loss = self.process_batch(batch_data)
         
         # Update default logging 
-        if(self.DEBUG_useitem):
-            self.step_loss.append(loss.item())
-            if(self.epoch_loss is not None):
-                self.epoch_loss.append(loss.item())
-        else:
-            self.step_loss.append(loss.detach())
-            if(self.epoch_loss is not None):
-                self.epoch_loss.append(loss.detach())
+        self.step_loss.append(loss.detach())
+        if(self.epoch_loss is not None):
+            self.epoch_loss.append(loss.detach())
 
         # Do default logging
         if(self.do_step_log):
             if(self.logging):
-                if(self.DEBUG_useitem):
-                    self.logger.log({'loss/train_step':sum(self.step_loss)/len(self.step_loss)},commit=False)
-                else:
-                    self.logger.log({'loss/train_step':torch.mean(torch.stack(self.step_loss)).item()},commit=False)
+                self.logger.log({'loss/train_step':torch.mean(torch.stack(self.step_loss)).item()},commit=False)
 
                 self._update_x_axis()
             self.step_loss=[]
@@ -785,7 +779,6 @@ class Trainer:
         n_aggreg+=1
 
         if(n_aggreg%aggregate==0):
-            n_aggreg=0
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.)
 
             self.optim.step()
@@ -797,8 +790,10 @@ class Trainer:
             ## Update the step number
             self.stepnum+=1
             self.steps_done+=1
+            n_aggreg=0
 
-        self.do_step_log = (self.stepnum%self.step_log)==0 if self.step_log else False
+        # we won't log at stepnum=0, since we see it at self.stepnum=1 first, but that's ok
+        self.do_step_log = (n_aggreg==0 and ((self.stepnum)%self.step_log)==0) if self.step_log else False
 
         return n_aggreg
 
@@ -817,22 +812,15 @@ class Trainer:
             self.batchnum=v_batchnum
             
             loss = self.process_batch_valid(v_batch_data)
-            if(self.DEBUG_useitem):
-                val_loss.append(loss.item())
-            else:
-                val_loss.append(loss.detach())
+            val_loss.append(loss.detach())
         
         self.totbatch=t_totbatch
         self.batchnum=t_batchnum
         
         # Log validation data
         if(self.logging):
-            if(self.DEBUG_useitem):
-                self.logger.log({'loss/valid':sum(val_loss)/len(val_loss)},commit=False)
-            else:
-                self.logger.log({'loss/valid':torch.mean(torch.stack(val_loss)).item()},commit=False)
+            self.logger.log({'loss/valid':torch.mean(torch.stack(val_loss)).item()},commit=False)
         
-    
     def _init_logger(self):
         """ Initiate the logger, and define the custom x axis metrics """
         self.logger = wandb.init(name=self.run_name,project=self.project_name,config=self.run_config,
@@ -844,11 +832,10 @@ class Trainer:
         self.logger.define_metric("batches",hidden=True)
 
     def _save_and_backup(self,curstep,save_every,backup_every):
-        # We use curstep-1, to save at a moment consistent with the valid
-        # And valid looks at curstep-1. (we updated curstep in between)
-        if (curstep-1)%save_every==0 :
+        # First time we check, curstep=1, so with this check we don't save at the beginning
+        if curstep%save_every==0 :
             self.save_state()
         
         if backup_every is not None:
-            if (curstep-1)%backup_every==backup_every-1 :
+            if curstep%backup_every==0 :
                 self.save_state(epoch=self.epochs)

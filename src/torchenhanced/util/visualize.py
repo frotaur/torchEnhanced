@@ -4,7 +4,7 @@ from torchvision.utils import make_grid
 import cv2, numpy as np
 
 @torch.no_grad()
-def showTens(tensor, columns=None) :
+def showTens(tensor, columns=None, colorbar=False) :
     """"
         Shows tensor as an image using pyplot.
         Any extra dimensions (*,C,H,W) are treated as batch dimensions.
@@ -12,18 +12,19 @@ def showTens(tensor, columns=None) :
         Args:
         tensor : (H,W) or (C,H,W) or (*,C,H,W) tensor to display
         columns : number of columns to use for the grid of images (default 8 or less)
+        colorbar : whether to add a colorbar to the image, only works for grayscale images (default False)
     """
     tensor = tensor.detach().cpu()
 
     if(len(tensor.shape)==2):
-        fig = plt.figure()
-        plt.imshow(tensor[None,:,:])
-        plt.axis('off')
-        plt.show()
+        showTens(tensor[None,:,:],columns,colorbar)
     elif(len(tensor.shape)==3) :
         fig = plt.figure()
         plt.imshow(tensor.permute((1,2,0)))
         plt.axis('off')
+        if(tensor.shape[0]==1 and colorbar):
+            plt.colorbar()
+        # plt.tight_layout(pad=0)
         plt.show()
     elif(len(tensor.shape)==4) :
         # Assume B,C,H,W
@@ -32,27 +33,21 @@ def showTens(tensor, columns=None) :
             numCol=columns
         else :
             numCol=min(8,B)
-
-        fig = plt.figure()
         
         to_show=make_grid(tensor,nrow=numCol,pad_value=0.2 ,padding=3)
         if(tensor.shape[1]==1):
             to_show=to_show.mean(dim=0,keepdim=True)
 
-        plt.imshow(to_show.permute(1,2,0))
-        if(tensor.shape[1]==1):
-            plt.colorbar()
-        plt.axis('off')
-        plt.show()
+        showTens(to_show,columns,colorbar)
     elif(len(tensor.shape)>4):
         tensor = tensor.reshape((-1,tensor.shape[-3],tensor.shape[-2],tensor.shape[-1])) # assume all batch dimensions
         print("Assuming extra dimension are all batch dimensions, newshape : ",tensor.shape)
-        showTens(tensor,columns)
+        showTens(tensor,columns,colorbar)
     else :
         raise Exception(f"Tensor shape should be (H,W), (C,H,W) or (*,C,H,W), but got : {tensor.shape} !")
 
 @torch.no_grad()
-def saveTens(tensor, folderpath,name="imagetensor",columns=None):
+def saveTens(tensor, folderpath,name="imagetensor",columns=None,colorbar=False):
     """
         Saves tensor as a png image using pyplot.
         Any extra dimensions (*,C,H,W) are treated as batch dimensions.
@@ -62,19 +57,19 @@ def saveTens(tensor, folderpath,name="imagetensor",columns=None):
         folderpath : relative path of folder where to save the image
         name : name of the image (do not include extension)
         columns : number of columns to use for the grid of images (default 8 or less)
+        colorbar : whether to add a colorbar to the image, only works for grayscale images (default False)
     """
     tensor = tensor.detach().cpu()
     os.makedirs(folderpath,exist_ok=True)
+
     if(len(tensor.shape)==2) :
-        fig = plt.figure()
-        plt.imshow(tensor[None,:,:])
-        plt.axis('off')
-        plt.savefig(os.path.join(folderpath,f"{name}.png"),bbox_inches='tight')
-    if(len(tensor.shape)==3) :
-        fig = plt.figure()
+        saveTens(tensor[None,:,:],folderpath,name,colorbar=colorbar)
+    elif(len(tensor.shape)==3) :
         plt.imshow(tensor.permute((1,2,0)))
         plt.axis('off')
-        plt.savefig(os.path.join(folderpath,f"{name}.png"),bbox_inches='tight')
+        if(tensor.shape[0]==1 and colorbar):
+            plt.colorbar()
+        plt.savefig(os.path.join(folderpath,f"{name}.png"),bbox_inches='tight',pad_inches=0)
     elif(len(tensor.shape)==4) :
         # Assume B,C,H,W
         B=tensor.shape[0]
@@ -82,23 +77,15 @@ def saveTens(tensor, folderpath,name="imagetensor",columns=None):
             numCol=columns
         else :
             numCol=min(8,B)
+        to_show=make_grid(tensor,nrow=numCol,pad_value=0.,padding=2) # (3,H',W')
 
-        fig = plt.figure()
-        
-        to_show=make_grid(tensor,nrow=numCol,pad_value=0. ,padding=2)
-        if(tensor.shape[1]==1):
+        if(tensor.shape[1]==1):# Restore grayscale if it was, gridify makes it RGB
             to_show=to_show.mean(dim=0,keepdim=True)
-
-        plt.imshow(to_show.permute(1,2,0))
-        if(tensor.shape[1]==1):
-            plt.colorbar()
-
-        plt.axis('off')
-        plt.savefig(os.path.join(folderpath,f"{name}.png"),bbox_inches='tight')
+        saveTens(to_show,folderpath,name,colorbar=colorbar)
     elif(len(tensor.shape)>4):
         tensor = tensor.reshape((-1,tensor.shape[-3],tensor.shape[-2],tensor.shape[-1])) # assume all batch dimensions
         print("WARNING : assuming extra dimension are all batch dimensions, newshape : ",tensor.shape)
-        saveTens(tensor,folderpath,name,columns)
+        saveTens(tensor,folderpath,name,columns,colorbar=colorbar)
     else :
         raise Exception(f"Tensor shape should be (H,W), (C,H,W) or (*,C,H,W), but got : {tensor.shape} !")
 
@@ -139,31 +126,7 @@ def saveTensVideo(tensor,folderpath,name="videotensor",columns=None,fps=30,out_s
         # Assume B,T,3,H,W
         B,T,C,H,W = tensor.shape
 
-        if(columns is not None):
-            numCol=columns
-        else :
-            numCol=min(8,B)
-
-
-        black_cols = (-B)%numCol
-        video_tens = torch.cat([tensor.to('cpu'),torch.zeros(black_cols,T,C,H,W)],dim=0) # (B',T,3,H,W)
-        video_tens = transf.Pad(3)(video_tens) # (B',T,3,H+3*2,W+3*2)
-
-        B,T,C,H,W = video_tens.shape
-        resize_ratio = out_size/(H*numCol)
-        indiv_vid_size = int(H*resize_ratio),int(W*resize_ratio)
-
-        video_tens = video_tens.reshape((B*T,C,H,W)) # (B'*T,3,H,W
-        video_tens = transf.Resize(indiv_vid_size,antialias=True)(video_tens) # (B'*T,3,H',W')
-        video_tens = video_tens.reshape((B,T,C,indiv_vid_size[0],indiv_vid_size[1])) # (B',T,3,H',W')
-        B,T,C,H,W = video_tens.shape
-
-        assert B%numCol==0
-        numRows = B//numCol
-
-        video_tens = video_tens.reshape((numRows,numCol,T,C,H,W)) # (numRows,numCol,T,3,H',W')
-        video_tens = torch.einsum('nmtchw->tcnhmw',video_tens) # (T,C,numRows,H',numCol,W')
-        video_tens = video_tens.reshape((T,C,numRows*H,numCol*W)) # (T,C,numRows*H,numCol*W)
+        tensor = gridify(tensor,out_size,columns)
 
         _make_save_video(video_tens,folderpath,name,fps)
     elif (len(tensor.shape)>5):

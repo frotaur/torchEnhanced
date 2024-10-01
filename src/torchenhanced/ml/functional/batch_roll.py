@@ -30,6 +30,6 @@ if __name__=='__main__':
 
     print(shifts_x, shifts_y)
 
-    rolled= batched_roll(X,shifts_x,shifts_y)
+    rolled= batch_roll(X,shifts_x,shifts_y)
     print(f'rolled shape {rolled.shape}')
     print(f'rolled result : \n{rolled}')

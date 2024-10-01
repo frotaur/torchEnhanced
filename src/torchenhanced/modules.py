@@ -1,5 +1,6 @@
 import torch.nn as nn
 import torch
+import inspect
 
 
 class DevModule(nn.Module):
@@ -32,16 +33,28 @@ class ConfigModule(DevModule):
         stores the necessary data to reconstruct the model.
         Use preferably over DevModule, especially with use with Trainer.
 
+        Currently INCOMPATIBLE with the use of *args in __init__. **kwargs are fine.
+    
         Args :
-        config : Dictionary that contains the key:value pairs needed to 
-        instantiate the model (i.e. the argument values of the __init__ method)
+        device : optional, default 'cpu'. Explicitely provide if no argument 'device' is present in __init__.
+        config : deprecated, only for compatibility. Do not use.
     """
-    def __init__(self, config:dict, device:str='cpu'):
+
+    def __init__(self, config=None, device='cpu'):
+        frame = inspect.currentframe().f_back
+        args, _, kwarg_name, local_vars = inspect.getargvalues(frame)
+        # Return a dictionary excluding 'self'
+        self._config={arg: local_vars[arg] for arg in args if arg != 'self'}
+        if(kwarg_name is not None):
+            self._config.update(local_vars[kwarg_name]) # Add **kwargs
+
+        if('device' in self._config.keys()):
+            device = self._config['device']
+        
         super().__init__(device=device)
 
-        self._config = config
-
-        self.class_name = self.__class__.__name__ # Use this instead if, at time of saving, you need the name.
+        # Use this if, at time of saving, you need the name.
+        self.class_name = self.__class__.__name__ 
 
     @property
     def config(self):
