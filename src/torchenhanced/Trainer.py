@@ -42,7 +42,6 @@ class Trainer:
                  save_loc=None,device:str ='cpu',parallel:list[int]=None, run_name :str = None,project_name :str = None,
                  run_config : dict = {}, no_logging = False):
         super().__init__()
-        self.DEBUG_useitem = DEBUG_useitem
         
         self.parallel_train = parallel is not None
         self.parallel_devices = parallel
