@@ -119,7 +119,7 @@ def test_no_kwargs():
     assert model.device == testimony.device, f"found {model.device=} instead of cpu"
 
 
-# if __name__ == "__main__":
-#     test_kwargs()
-#     test_no_device()
-#     print("All tests passed !")
+if __name__ == "__main__":
+    test_kwargs()
+    test_no_device()
+    print("All tests passed !")

@@ -18,11 +18,7 @@ curfold = pathlib.Path(__file__).parent
 
 class LinSimple(ConfigModule):
     def __init__(self, hidden=28 * 28, out=10):
-        config = locals()
-        del config["self"]
-        del config["__class__"]
-
-        super().__init__(config)
+        super().__init__()
 
         self.layer = nn.Linear(hidden, out)
         # Initialize all weights to 1, bias to 0:

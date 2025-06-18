@@ -23,9 +23,7 @@ def test_paranum_empty_module():
 def make_test_configmodule():
     class TestConfigModule(ConfigModule):
         def __init__(self, hidden=28 * 28, out=10):
-            config = {"hidden": hidden, "out": out}
-
-            super().__init__(config)
+            super().__init__()
 
             self.layer = nn.Linear(hidden, out)
 

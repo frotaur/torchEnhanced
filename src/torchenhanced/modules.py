@@ -36,26 +36,63 @@ class ConfigModule(DevModule):
     Use preferably over DevModule, especially with use with Trainer.
 
     Currently INCOMPATIBLE with the use of *args in __init__. **kwargs are fine.
-
-    Args :
-    device : optional, default 'cpu'. Explicitely provide if no argument 'device' is present in __init__.
-    config : deprecated, only for compatibility. Do not use.
+    This is because we want to be able to use it like model(**config), and I can't
+    do that with args.
     """
 
-    def __init__(self, config=None, device="cpu"):
-        frame = inspect.currentframe().f_back
-        args, _, kwarg_name, local_vars = inspect.getargvalues(frame)
-        # Return a dictionary excluding 'self'
-        self._config = {arg: local_vars[arg] for arg in args if arg != "self"}
-        if kwarg_name is not None:
-            self._config.update(local_vars[kwarg_name])  # Add **kwargs
+    def __init_subclass__(cls,**kwargs):
+        """
+            Wrap the __init__ method of subclasses to capture their configuration.
+        """
+        super().__init_subclass__(**kwargs)
+        
+        # Get the original __init__ method
+        original_init = cls.__init__
+        
+        def wrapped_init(self, *args, **kwargs):
+            """
+                Replacement __init__ method, adding the config creation logic.
+            """
+            # Only capture config if it hasn't been set yet (i.e., this is the leaf class)
+            if not hasattr(self, '_config'):
+                self._config = {}
+                # Extract config from arguments using signature inspection
+                sig = inspect.signature(original_init)
+                bound_args = sig.bind(self, *args, **kwargs)
+                bound_args.apply_defaults()
 
+                for param_name, value in bound_args.arguments.items():
+                    if param_name == 'self':
+                        continue
+                    
+                    param = sig.parameters[param_name]
+                    if param.kind == inspect.Parameter.VAR_KEYWORD:
+                        # This is **kwargs - flatten it into the config
+                        if isinstance(value, dict):
+                            self._config.update(value)
+                    elif param.kind == inspect.Parameter.VAR_POSITIONAL:
+                        # This is *args - skip it (incompatible with **config re-instantiation)
+                        continue
+                    else:
+                        # Regular parameter
+                        self._config[param_name] = value
+            
+            # Call the original __init__
+            return original_init(self, *args, **kwargs)
+        
+        # Replace the __init__ method with our wrapped version
+        cls.__init__ = wrapped_init
+
+    def __init__(self, device:str="cpu"):
+        """
+            Initializes ConfigModule. Device argument is ignored if it is in the config,
+            but it would be crazy if the config device did not match the device argument.
+        """
         if "device" in self._config.keys():
             device = self._config["device"]
-
         super().__init__(device=device)
 
-        # Use this if, at time of saving, you need the name.
+
         self.class_name = self.__class__.__name__
 
     @property
