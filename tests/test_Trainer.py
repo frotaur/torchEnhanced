@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, Subset
 from torchvision.datasets import MNIST
 import torch.nn.functional as F
 from torchvision import transforms as t
-from src.torchenhanced import Trainer, DevModule, ConfigModule
+from src.torchenhanced import Trainer, ConfigModule
 import os, time, shutil
 
 curfold = pathlib.Path(__file__).parent
